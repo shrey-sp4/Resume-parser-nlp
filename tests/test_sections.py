@@ -229,3 +229,53 @@ def test_inline_experience_line_splits_into_heading_and_plain_content(tmp_path):
     content = exp["lines"][0]
     assert content["text"] == "TWELVE YEARS" and content["no_heading"] and content["bold"] == 1.0
     assert len(stage3.data["blocks"]) == 3  # personal, education, experience: no extra block
+
+
+# ---------------------------------------------------------------- table cells as headings
+
+EDU_TABLE = [
+    ["Course", "Board / University", "Year"],
+    ["Ph.D.", "Northfield Institute of Science", "2021"],
+    ["M.Sc.", "Lakeside University", "2016"],
+]
+
+
+def _cell(text, col, row_id="p001_t1r00", i=1):
+    return _line(text, i, in_table=True, cell_row=0, cell_col=col, row_id=row_id)
+
+
+def _table_headings(cells):
+    from resume_parser.sections import find_headings
+
+    p = dict(load_thresholds()["stage3_sections"], fuzzy_min=90)
+    headings, _unknown = find_headings(cells, p, use_look=True)
+    return {cells[i]["text"]: h[0] for i, h in headings.items()}
+
+
+def test_column_header_row_is_never_a_section_heading():
+    row = [_cell("Education", 0, i=1), _cell("Institution", 1, i=2), _cell("Year", 2, i=3)]
+    assert _table_headings(row) == {}
+
+
+def test_row_heading_needs_a_target_alias_and_content_beside_it():
+    with_content = [_cell("Education", 0, i=1), _cell("Ph.D. in Physics, Westbrook University, 2019", 1, i=2)]
+    assert _table_headings(with_content) == {"Education": "education"}
+    assert _table_headings([_cell("Experience", 0)]) == {"Experience": "experience"}  # a title row
+    other_alias = [_cell("Skills", 0, i=1), _cell("Python, R, statistics and teaching", 1, i=2)]
+    assert _table_headings(other_alias) == {}  # not a target section
+    not_leftmost = [_cell("2019", 0, i=1), _cell("Publications", 1, i=2)]
+    assert _table_headings(not_leftmost) == {}
+
+
+def test_education_table_with_a_header_row_stays_in_education(tmp_path):
+    pdf = synth.make_heading_table_pdf(tmp_path / "edu_table.pdf", "Education", EDU_TABLE,
+                                       [("heading", "Work Experience")] + EXP_LINES)
+    _stage3, stage4 = _run(pdf)
+    assert [s["name"] for s in stage4.data["sections"]] == ["personal", "education", "experience"]
+    edu = stage4.data["sections"][1]
+    assert [x["text"] for x in edu["lines"]] == [c for row in EDU_TABLE for c in row]
+
+
+def test_two_column_table_cv_still_splits_at_row_headings(tmp_path):
+    _stage3, stage4 = _run(synth.make_table_headings_pdf(tmp_path / "t.pdf"))
+    assert [s["name"] for s in stage4.data["sections"]] == ["personal", "education", "experience"]

@@ -164,8 +164,16 @@ always picks the same method.
   the ideal section names is finished in stage 4.
 - Heading signals (settings in `thresholds.json`, `stage3_sections`, to calibrate):
   - vocabulary: the whole normalised line is an alias in `config/section_aliases.json`, or has
-    `fuzz.ratio` at least 90 with one (misspelt headings). Table cells may be headings by an
-    exact alias only (header cells such as "Degree" are too close to aliases).
+    `fuzz.ratio` at least 90 with one (misspelt headings).
+  - table cells: a cell is a heading only if it is an exact alias of a target section
+    (education, experience, publications) and the heading of its row: the leftmost non-empty
+    cell, with the rest of the row empty or holding real content (a digit, or more than 3
+    words). A row of short column-header words (Course, Board, Year) is a table header, never
+    a section heading. Cells are never matched fuzzily.
+  - inline headings: a line that starts with a target-section alias followed by a colon or a
+    spaced dash ("Experience: 25 years ...") is split into a heading line and a content line;
+    the content line is never a heading candidate. Aliases of other sections never split
+    inline ("Research interests: ..." inside an entry is a field, not a section).
   - look: a short line (at most 8 words, 60 characters, no full stop, not a table cell, not a
     date, degree or citation line) with at least 2 of: font at least 1.15 x body size, bold,
     all capitals, white space above; one of them must be the larger font or the capitals, so a

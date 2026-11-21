@@ -379,6 +379,20 @@ def make_table_headings_pdf(path: Path) -> Path:
     return path
 
 
+def make_heading_table_pdf(path: Path, heading: str, rows: list[list[str]], after: list[tuple[str, str]]) -> Path:
+    """Personal lines, a section heading, a ruled table, then more (style, text) lines."""
+    styles = getSampleStyleSheet()
+    style_of = {"name": styles["Title"], "contact": styles["Normal"], "heading": styles["Heading2"],
+                "body": styles["Normal"]}
+    table = Table(rows, hAlign="LEFT")
+    table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.black), ("FONTSIZE", (0, 0), (-1, -1), 9)]))
+    story = [Paragraph(text, style_of[s]) for s, text in PERSONAL_TOP]
+    story += [Paragraph(heading, styles["Heading2"]), table]
+    story += [Paragraph(text, style_of[s]) for s, text in after]
+    SimpleDocTemplate(str(path), pagesize=A4, title="synthetic heading table", author="synthetic").build(story)
+    return path
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) != 1:

@@ -127,13 +127,22 @@ def test_unknown_heading_with_plain_content_is_kept_as_other(tmp_path):
     assert "heading_kept_as_other" in _codes(stage4)
 
 
-def test_missing_target_section_is_information_only(tmp_path):
+def test_missing_experience_is_a_warning(tmp_path):
     lines = PERSONAL_TOP + [("heading", "EDUCATION")] + EDU_LINES + [("heading", "PUBLICATIONS")] + PUB_LINES
     _stage3, stage4 = _run(synth.make_lines_pdf(tmp_path / "noexp.pdf", lines))
     assert "missing_target_section:experience" in _codes(stage4)
     assert "missing_target_section:education" not in _codes(stage4)
-    assert stage4.status.value == "OK"
-    assert not [f for f in flags_from(stage4) if f["code"].startswith("missing_target_section")]
+    assert stage4.status.value == "WARN"
+    flags = [f for f in flags_from(stage4) if f["code"].startswith("missing_target_section")]
+    assert flags == [{"section": "experience", "code": "missing_target_section:experience",
+                      "detail": "stage4"}]
+
+
+def test_missing_publications_is_information_only(tmp_path):
+    lines = PERSONAL_TOP + [("heading", "EDUCATION")] + EDU_LINES + [("heading", "WORK EXPERIENCE")] + EXP_LINES
+    _stage3, stage4 = _run(synth.make_lines_pdf(tmp_path / "nopub.pdf", lines))
+    assert "missing_target_section:publications" in _codes(stage4)
+    assert stage4.status.value == "OK" and not flags_from(stage4)
 
 
 def test_no_target_section_warns(tmp_path):
@@ -162,3 +171,37 @@ def test_sections_are_deterministic(synthetic_pdfs):
     a = run_pipeline(synthetic_pdfs[1], stages=default_stages()[:5]).results["stage4"]
     b = run_pipeline(synthetic_pdfs[1], stages=default_stages()[:5]).results["stage4"]
     assert a.data == b.data and a.to_report() == b.to_report()
+
+
+# ---------------------------------------------------------------- inline headings
+
+
+def _line(text, i=1, **extra):
+    return {"id": f"p001_l{i:04d}", "page": 1, "text": text, "bbox": [56, 100, 300, 110], "font_size": 10,
+            "bold": 0.0, "in_table": False, **extra}
+
+
+def test_split_inline_headings_rule():
+    from resume_parser.sections import split_inline_headings
+
+    out = split_inline_headings([_line("Work Experience: 12 years in teaching and research")])
+    assert [(x["id"], x["text"], x.get("inline_heading")) for x in out] == [
+        ("p001_l0001_h", "Work Experience", True), ("p001_l0001", "12 years in teaching and research", None)]
+    assert len(split_inline_headings([_line("Skills - Python, R and statistics")])) == 2  # spaced dash
+    for text in ("Email: someone@example.org", "Experience:", "Self-funded experience in labs",
+                 "Duration: 2019 - 2021"):
+        assert split_inline_headings([_line(text)]) == [_line(text)], text
+    cell = _line("Education: Ph.D.", in_table=True)
+    assert split_inline_headings([cell]) == [cell]  # table cells are left to the table rule
+
+
+def test_inline_heading_cv_is_routed_and_keeps_every_line(tmp_path):
+    lines = PERSONAL_TOP + [("heading", "EDUCATION")] + EDU_LINES + \
+        [("heading", "WORK EXPERIENCE: 3 years of teaching")] + EXP_LINES + \
+        [("heading", "PUBLICATIONS")] + PUB_LINES
+    record = run_pipeline(synth.make_lines_pdf(tmp_path / "inline.pdf", lines), stages=default_stages()[:5])
+    stage4 = record.results["stage4"]
+    exp = next(s for s in stage4.data["sections"] if s["name"] == "experience")
+    assert exp["heading_raw"] == "WORK EXPERIENCE" and exp["heading_line"]["inline_heading"]
+    assert [x["text"] for x in exp["lines"]] == ["3 years of teaching"] + [t for _, t in EXP_LINES]
+    assert "lines_lost_or_duplicated" not in _codes(stage4)

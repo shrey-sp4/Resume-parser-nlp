@@ -59,9 +59,9 @@ methods" below).
 - WARN or FAIL in stages 2 to 7: carry on, but mark the resume and the affected section.
   The JSON is still written, with `needs_review: true` and the reasons, so no information is lost.
 - Information-level reason codes are kept in the stage report but are not flags:
-  `not_implemented` (a method is not built yet) and `missing_target_section:<name>` (stage 4
-  found no personal, education, experience or publications section). A code may carry a
-  qualifier after a colon.
+  `not_implemented` (a method is not built yet), and `missing_target_section:personal` /
+  `missing_target_section:publications` (stage 4 found no such section). A missing education
+  or experience section is a WARN `missing_target_section:<name>` instead.
 
 **Choosing between methods.** Every stage has a fixed, ordered chain of named methods.
 A shared helper in the runner (`run_with_fallbacks`) does the choosing:
@@ -216,8 +216,9 @@ always picks the same method.
   all section names are from the allowed list; no target-looking lines (dates, degrees,
   citations) sit in `other` or `unassigned` beyond a small limit.
 - Gate: WARN `target_lines_in_other` when more than 10% of target-looking lines sit in
-  `other` or `unassigned`; WARN `lines_lost_or_duplicated` if the line check fails. A missing
-  target section gets the information-level `missing_target_section:<name>`.
+  `other` or `unassigned`; WARN `lines_lost_or_duplicated` if the line check fails;
+  `missing_target_section:<name>` for a missing target section (WARN for education and
+  experience, information only for personal and publications).
 
 Canonical Document (sketch; each section also has `block_id` and `heading_line`):
 ```json
@@ -584,3 +585,15 @@ Build one stage at a time. A stage is done when it passes its checks on dev and 
   stage is measured before the next.
 - Small ground truth (25 usable resumes plus 15 frozen test). Report confidence intervals.
 - Table-heavy layouts and very long publication lists are the known hard cases.
+
+## 14. Known limitations
+
+- **Sidebar and layout-table templates.** CVs drawn with a sidebar (contact, skills or
+  languages in a narrow column) or inside a layout table (the page or a column drawn as table
+  cells) are read in the wrong order: stage 1 reads top to bottom (or cell by cell), so the
+  sidebar and the main column interleave, and a whole page can become one or two huge cells.
+  Their many bold or capitalised lines are then over-split by look-based headings in stage 3.
+  The pipeline does not try to repair these layouts: it flags them for review
+  (`no_target_section`, `missing_target_section:<name>`, `target_lines_in_other`). An attempt
+  to read many-row table cells as normal lines was measured on dev and made routing worse
+  (wrapped data cells were taken for layout boxes), so it was reverted.

@@ -18,13 +18,15 @@ Canonical Document:
 Lines are the stage 2 lines unchanged (id, page, bbox and the rest kept).
 
 Document checks, added as reasons:
-- every stage 2 line is in exactly one section (as a heading or a line), in order; otherwise
-  WARN lines_lost_or_duplicated
+- every stage 2 line is in exactly one section (as a heading or a line; an inline heading
+  split off a line counts as part of that line), in order; otherwise WARN
+  lines_lost_or_duplicated
 - section names are only personal, education, experience, publications, other
 - target-looking lines (dates, degrees, citations) in "other" or unassigned at most leak_max of
   all target-looking lines; otherwise WARN target_lines_in_other
-- each of personal, education, experience, publications that is missing gets the
-  information-level code missing_target_section:<name> (kept in the report, not a flag)
+- each of personal, education, experience, publications that is missing gets the code
+  missing_target_section:<name>: a WARN (and a flag) for education and experience,
+  information only for personal and publications
 """
 
 from __future__ import annotations
@@ -93,6 +95,9 @@ METHODS = (
 )
 
 
+WARN_IF_MISSING = ("education", "experience")
+
+
 def check_mapping(data: dict) -> float:
     return data["confidence"]
 
@@ -119,7 +124,8 @@ def document_reasons(document: dict, stage2_lines: list[dict], p: dict) -> list[
     out: list[tuple[Status, Reason]] = []
     seen = []
     for sec in document["sections"]:
-        if sec["heading_line"] is not None:
+        # an inline heading is part of its content line, which keeps the original id
+        if sec["heading_line"] is not None and not sec["heading_line"].get("inline_heading"):
             seen.append(sec["heading_line"]["id"])
         seen += [line["id"] for line in sec["lines"]]
     seen += [line["id"] for line in document["unassigned"]]
@@ -142,7 +148,8 @@ def document_reasons(document: dict, stage2_lines: list[dict], p: dict) -> list[
     present = {s["name"] for s in document["sections"]}
     for name in TARGETS:
         if name not in present:
-            out.append((Status.OK, Reason(f"missing_target_section:{name}", section=name)))
+            status = Status.WARN if name in WARN_IF_MISSING else Status.OK
+            out.append((status, Reason(f"missing_target_section:{name}", section=name)))
     return out
 
 

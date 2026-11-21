@@ -17,6 +17,10 @@ Heading signals (thresholds.json, stage3_sections, to calibrate):
   are never taken from the first name_zone_lines lines of page 1, so the name line stays in
   the personal block.
 
+Inline headings: a line (not a table cell) that starts with an alias followed by a colon or
+a spaced dash, with text after it ("Experience: 25 years ..."), is split first into a heading
+line (id "<id>_h", inline_heading True) and a content line that keeps the original id.
+
 Methods, in order (the first whose score reaches the accept threshold wins):
   heading_vocabulary  split at vocabulary headings only
   heading_look        vocabulary and look headings
@@ -37,6 +41,7 @@ Unknown heading-like lines (look headings that are not aliases) are listed by id
 
 from __future__ import annotations
 
+import re
 import statistics
 from pathlib import Path
 
@@ -115,6 +120,24 @@ def find_headings(lines: list[dict], p: dict, use_look: bool) -> tuple[dict[int,
     return headings, unknown
 
 
+# ---------------------------------------------------------------- inline headings
+
+_INLINE = re.compile(r"^(?P<head>[^:]{2,60}?)\s*(?::|\s[-–—](?=\s))\s*(?P<rest>\S.*)$")
+
+
+def split_inline_headings(lines: list[dict]) -> list[dict]:
+    """Split "Alias: content" lines into a heading line and a content line (see above)."""
+    out = []
+    for line in lines:
+        m = None if line.get("in_table") else _INLINE.match(line["text"])
+        if m and exact_alias(m.group("head")):
+            out.append(dict(line, id=f"{line['id']}_h", text=m.group("head").strip(), inline_heading=True))
+            out.append(dict(line, text=m.group("rest").strip()))
+        else:
+            out.append(line)
+    return out
+
+
 # ---------------------------------------------------------------- blocks
 
 
@@ -143,6 +166,7 @@ def _detect(payload, method: str, use_look: bool, use_content: bool) -> MethodOu
     lines, p = payload
     if not lines:
         return MethodOutput(None)
+    lines = split_inline_headings(lines)
     headings, unknown = find_headings(lines, p, use_look)
     blocks = build_blocks(lines, headings, p, use_content)
     return MethodOutput({"method": method, "blocks": blocks, "unknown_headings": unknown,

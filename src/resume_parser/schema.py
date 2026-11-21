@@ -26,13 +26,15 @@ CANONICAL_SECTIONS = TARGET_SECTIONS + ("other",)
 FLAG_SECTIONS = CANONICAL_SECTIONS + ("document",)
 
 # Reason codes that are kept in the stage report but are never raised as flags.
-INFO_CODES = frozenset({"not_implemented", "missing_target_section"})
+# A missing education or experience section is a WARN (and a flag); a missing personal or
+# publications section is information only (many CVs have no publications).
+INFO_CODES = frozenset({"not_implemented", "missing_target_section:personal",
+                        "missing_target_section:publications"})
 
 
 def is_info(code: str) -> bool:
-    """Information-level codes are kept in the stage report but never become flags. A code
-    may carry a qualifier after a colon (missing_target_section:education)."""
-    return code.split(":", 1)[0] in INFO_CODES
+    """Information-level codes are kept in the stage report but never become flags."""
+    return code in INFO_CODES
 
 
 class Status(str, Enum):

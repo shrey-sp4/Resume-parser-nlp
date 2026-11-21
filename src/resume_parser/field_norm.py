@@ -207,15 +207,17 @@ _MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct",
 _MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
 # one point in time: "Jul 2023", "July, 2023", "07/2023", "2023", "Jul'19", "Jul 19", "'19"
 # also "01/07/2019", "01-07-2019", "01.07.2019", "July 1, 2019", "1st July 2019"
-_DAY = r"\d{1,2}(?:st|nd|rd|th)?"
+# a number followed by st/nd/rd/th (also "9 th", as some PDFs print it) is a day, never a year
+_ORDINAL = r"\s?(?:st|nd|rd|th)\b"
+_DAY = rf"\d{{1,2}}(?:{_ORDINAL})?"
 _POINT = (rf"(?:(?:(?<!\d){_DAY}\s+{_MONTH}[\s,.\-]*|{_MONTH}\s+{_DAY},?\s+|{_MONTH}[\s,.\-]*"
           rf"|(?<!\d)\d{{1,2}}\s*[/.\-]\s*\d{{1,2}}\s*[/.\-]\s*|(?<!\d)\d{{1,2}}\s*[/.\-]\s*)?(?<!\d)(?:19|20)\d{{2}}(?!\d)"
-          rf"|{_MONTH}\s*['’`]\s*\d{{2}}(?!\d)|(?<![A-Za-z]){_MONTH}\s+\d{{2}}(?![\d/:,])|['’`]\d{{2}}(?!\d))")
+          rf"|{_MONTH}\s*['’`]\s*\d{{2}}(?!\d)|(?<![A-Za-z]){_MONTH}\s+\d{{2}}(?![\d/:,]|{_ORDINAL})|['’`]\d{{2}}(?!\d))")
 _PRESENT = r"(?:present|current|till\s+date|till\s+now|to\s+date|todate|tilldate|date|now|ongoing|continuing|today)"
 _RANGE_SEP = r"\s*(?:-|–|—|−|~|\bto\b|\btill\b|\buntil\b)\s*"
 # a range ends in another point, a "Present"-style word, or two digits after a year ("2019-20")
-DATE_SPAN = re.compile(rf"(?<![A-Za-z]){_POINT}(?:{_RANGE_SEP}(?:{_POINT}|{_PRESENT}\b|(?<=[-–—])\d{{2}}(?![\d/])))?",
-                       re.IGNORECASE)
+DATE_SPAN = re.compile(rf"(?<![A-Za-z]){_POINT}(?:{_RANGE_SEP}(?:{_POINT}|{_PRESENT}\b"
+                       rf"|(?<=[-–—])\d{{2}}(?![\d/]|{_ORDINAL})))?", re.IGNORECASE)
 _POINT_ONLY = re.compile(rf"^{_POINT}$", re.IGNORECASE)
 _PRESENT_ONLY = re.compile(rf"^{_PRESENT}$", re.IGNORECASE)
 

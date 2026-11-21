@@ -294,8 +294,10 @@ with no title but an institution or dates is joined to the entry right before it
 has a title and lacks that slot (never across a section boundary).
 Methods: `date_anchor_split` (an entry starts at a line with dates or a job title from
 `config/titles.json`; a line starts a new entry only when it would fill a slot the current entry
-already has, a second title, second dates or a second institution-only line, so title, institution
-and dates written on separate lines in any order stay one entry; not used when most lines are table
+already has, a second title, second dates or a second institution-only line, so title,
+institution and dates written on separate lines in any order stay one entry; an entry with
+dates only then joins the next entry when that one has a title and no dates, else the entry
+before, never across a section boundary; not used when most lines are table
 cells), `table_row_split` (as education: one row is one entry, a header row of words such as
 designation, organisation, duration is dropped and tells which column is which),
 `paragraph_split`, `whole_section_one_entry` (always WARN). An entry made only of lines from a
@@ -499,7 +501,9 @@ example, a resume that stopped at stage 1) is scored as empty.
   location); experience dates (exact as printed); publication year (exact as printed), venue
   (partial ratio >= 85) and type.
 - Further rows are reported separately, so the rows above stay comparable with earlier runs:
-  degree_level, stream, job title and experience_type.
+  degree_level, stream, job title, experience_type, and experience dates once the spaces around
+  dashes are removed (`exp_dates_spacing`, a reading aid; the exact `exp_dates` stays the one
+  that counts, and the funnel uses it).
 - Empty GT fields are skipped and counted. "Predicted although GT is empty" is reported, never
   scored. Predicted publication counts are compared with GT `stated_totals`.
 - 95% percentile bootstrap CIs over resumes (10,000 samples, fixed seed 0).

@@ -17,7 +17,11 @@ Split methods, in order (the first whose check reaches the accept threshold wins
                           (a second title, second dates, or a second institution-only line), so a
                           title line followed by its institution or dates line stays one entry
                           whatever the order. Lines on the same row as the entry's first line
-                          never start a new entry. Not used when most lines are table cells.
+                          never start a new entry. An entry with dates only is then folded:
+                          forward into the next entry when that one has a title and no dates
+                          (dates written before the title), else back into the entry before;
+                          never across a section boundary. Not used when most lines are table
+                          cells.
   table_row_split         one table row is one entry; a row of column-header words with no year
                           is a header, is dropped and tells which column holds the title,
                           institution and dates. Lines outside the table join the previous entry.
@@ -429,7 +433,7 @@ def _table_share(lines: list[dict]) -> float:
 def _empty(method: str) -> MethodOutput:
     return MethodOutput({"method": method, "entries": [], "sides": [], "parsed_dates": [], "checks": [],
                          "lines_total": 0, "leftover": 0, "header_lines": 0, "dropped_from_content": 0,
-                         "merged_halves": 0})
+                         "merged_halves": 0, "folded_dates_only": 0})
 
 
 def date_anchor_split(payload) -> MethodOutput:
@@ -439,6 +443,7 @@ def date_anchor_split(payload) -> MethodOutput:
     if _table_share(lines) >= 0.5:
         return MethodOutput(None)
     groups, current, filled, leftover = [], [], set(), 0
+    fills: list[set] = []
     row_of_start = None
     for i, (line, kind) in enumerate(zip(lines, kinds)):
         if kind != "entry":
@@ -457,6 +462,7 @@ def date_anchor_split(payload) -> MethodOutput:
         if new_entry:
             if current:
                 groups.append(current)
+                fills.append(filled)
             current, filled, row_of_start = [i], set(slots), line.get("row_id")
         elif current:
             current.append(i)
@@ -465,7 +471,39 @@ def date_anchor_split(payload) -> MethodOutput:
             leftover += 1
     if current:
         groups.append(current)
-    return _groups_to_output(groups, payload, "date_anchor_split", leftover=leftover)
+        fills.append(filled)
+    groups, folded = _fold_dates_only(groups, fills, lines)
+    out = _groups_to_output(groups, payload, "date_anchor_split", leftover=leftover)
+    out.data["folded_dates_only"] = folded
+    return out
+
+
+def _fold_dates_only(groups: list[list[int]], fills: list[set], lines: list[dict]) -> tuple[list[list[int]], int]:
+    """An entry with dates only (no title, no institution) is not a job of its own. When the entry
+    right after it has a title and no dates, the dates belong to that one (dates written before the
+    title) and go forward; otherwise they join the entry right before. Never across a section
+    boundary; with no entry to join on either side it stays an entry."""
+    out: list[list[int]] = []
+    out_fills: list[set] = []
+    folded = 0
+    pending: list[int] | None = None  # dates-only lines waiting for the next entry
+    for k, (g, f) in enumerate(zip(groups, fills)):
+        if pending is not None:
+            g, f = pending + g, f | {"dates"}
+            pending = None
+        if f == {"dates"}:
+            nxt = k + 1 < len(groups) and not lines[groups[k + 1][0]].get("section_start")
+            if nxt and "title" in fills[k + 1] and "dates" not in fills[k + 1]:
+                pending = g
+                folded += 1
+                continue
+            if out and not lines[g[0]].get("section_start"):
+                out[-1] = out[-1] + g
+                folded += 1
+                continue
+        out.append(g)
+        out_fills.append(f)
+    return out, folded
 
 
 _ROLE_WORDS = {

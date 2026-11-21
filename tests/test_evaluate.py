@@ -59,7 +59,8 @@ def test_damaged_copy_scores_lower_in_the_expected_fields(data_dir, capsys):
     assert p["publications_R"] == 0.5 and p["publications_P"] == 1.0
     assert p["edu_institution_acc"] == pytest.approx(2 / 3)
     assert p["education_R"] == 1.0  # still matched, only the field is wrong
-    damaged = {"name_acc", "exp_dates_acc", "publications_R", "publications_F1", "edu_institution_acc"}
+    damaged = {"name_acc", "exp_dates_acc", "exp_dates_spacing_acc", "publications_R", "publications_F1",
+               "edu_institution_acc"}
     assert all(v == 1.0 for k, v in p.items() if k not in damaged)
     assert all(v == 1.0 for v in res["tuned"]["point"].values())
 
@@ -160,3 +161,17 @@ def test_no_names_or_file_names_in_any_output(data_dir, capsys):
     assert resume_id_for("jane_secret_cv") in out  # tuned rows are shown by ID
     id_map = read_json(data_dir / "private" / "id_map.json")
     assert id_map[resume_id_for("jane_secret_cv")]["file"] == "jane_secret_cv"
+
+
+def test_dates_spacing_row_is_reported_next_to_the_exact_one():
+    import evaluate as ev
+
+    gt = {"candidate_name": "", "education": [], "publications": [],
+          "experience": [{"job_title": "Lecturer", "institution": "Hillcrest University",
+                          "dates": "Jul 2019 - Jun 2021", "experience_type": "academic"}]}
+    pred = {"candidate_name": "", "education": [], "publications": [],
+            "experience": [dict(gt["experience"][0], dates="Jul 2019-Jun 2021")]}
+    fields = ev.score_resume(gt, pred)["fields"]
+    assert (fields["exp_dates"]["correct"], fields["exp_dates"]["n"]) == (0, 1)
+    assert (fields["exp_dates_spacing"]["correct"], fields["exp_dates_spacing"]["n"]) == (1, 1)
+    assert ev.field_errors("experience", gt["experience"][0], pred["experience"][0]) == ["dates"]

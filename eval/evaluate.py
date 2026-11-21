@@ -32,7 +32,8 @@ although the GT has none) is reported separately and never scored.
   pub_type         equal
   Further rows, kept apart so the rows above stay comparable with earlier runs:
   edu_degree_level equal; edu_stream normalised exact; exp_job_title normalised exact;
-  exp_experience_type equal.
+  exp_experience_type equal; exp_dates_spacing: exp_dates once the spaces around dashes are
+  removed (a reading aid next to exp_dates; the funnel and field_errors use exp_dates).
   pub counts       predicted entries per type vs GT stated_totals, where the GT has one
   CIs              95% percentile bootstrap over resumes (micro-aggregated), fixed seed
 
@@ -86,7 +87,7 @@ DEGREE_LEVEL_PATTERNS = (
 SECTIONS = ("education", "experience", "publications")
 OLD_FIELD_CHECKS = ("name", "name_norm", "edu_institution", "exp_institution", "exp_dates",
                     "pub_year", "pub_venue", "pub_type")
-NEW_FIELD_CHECKS = ("edu_degree_level", "edu_stream", "exp_job_title", "exp_experience_type")
+NEW_FIELD_CHECKS = ("edu_degree_level", "edu_stream", "exp_job_title", "exp_experience_type", "exp_dates_spacing")
 FIELD_CHECKS = OLD_FIELD_CHECKS + NEW_FIELD_CHECKS
 MATCH_COMPONENTS = ("edu_stream", "edu_institution", "exp_job_title", "exp_institution")
 COUNT_KEYS = ("tp", "fp", "fn", "n_gt", "n_pred")
@@ -229,6 +230,14 @@ def _norm_equal(g: str, p: str) -> bool:
     return bool(norm(p)) and norm(g) == norm(p)
 
 
+def _dates_spacing_equal(g: str, p: str) -> bool:
+    """Dates equal once the spaces around dashes are removed and other spaces collapsed
+    ("Jul 2019 - Jun 2021" = "Jul 2019-Jun 2021"). Reported next to exp_dates, never instead."""
+    def squash(s):
+        return re.sub(r"\s+", " ", re.sub(r"\s*([-–—])\s*", r"\1", s)).strip()
+    return bool(p) and squash(g) == squash(p)
+
+
 # (check name, entry key, compare(gt value, pred value)); both values are stripped strings
 FIELD_RULES: dict[str, tuple[tuple[str, str, Callable[[str, str], bool]], ...]] = {
     "education": (
@@ -322,6 +331,9 @@ def score_resume(gt: dict, pred: dict | None) -> dict:
             for check, key, ok in FIELD_RULES[sec]:
                 gv, pv = _s(g[gi].get(key)), _s(p[pi].get(key))
                 _check(F[check], gv, bool(pv), lambda gv=gv, pv=pv, ok=ok: ok(gv, pv))
+            if sec == "experience":  # a reading aid only; field_errors and the funnel use exp_dates
+                gv, pv = _s(g[gi].get("dates")), _s(p[pi].get("dates"))
+                _check(F["exp_dates_spacing"], gv, bool(pv), lambda gv=gv, pv=pv: _dates_spacing_equal(gv, pv))
 
     st = gt.get("stated_totals") or {}
     pubs = pr.get("publications") or []
@@ -416,6 +428,7 @@ FIELD_NOTES = {
     "pub_venue": f"partial ratio >= {VENUE_MIN:.0f}", "pub_type": "equal",
     "edu_degree_level": "equal", "edu_stream": "normalised exact",
     "exp_job_title": "normalised exact", "exp_experience_type": "equal",
+    "exp_dates_spacing": "as printed, spaces around dashes ignored",
 }
 
 

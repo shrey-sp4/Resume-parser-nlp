@@ -216,10 +216,11 @@ def test_content_routed_experience_keeps_only_entries_with_title_and_more():
                                                                                      for i, t in enumerate(texts)]}
     document = {"sections": [
         section("b1", ["Lecturer, Hillcrest University, 2015 - 2019", "Visiting Scholar"], 0),
-        section("b2", ["Head, Hillcrest University, 2020 - 2022", "Reviewer for the 2021 issue"], 10),
+        section("b2", ["Head, Hillcrest University, 2020 - 2022"], 10),
         section("b3", ["Visiting Scholar"], 20),
+        section("b4", ["Reviewer for the 2021 issue"], 30),
     ]}
-    payload = ex.experience_payload(document, PARAMS, content_blocks=frozenset({"b2", "b3"}))
+    payload = ex.experience_payload(document, PARAMS, content_blocks=frozenset({"b2", "b3", "b4"}))
     data = ex.date_anchor_split(payload).data
     # b1 has a heading: its title-only entry stays; b2 and b3 were routed by content: the
     # date-only and the title-only entries are dropped
@@ -329,3 +330,77 @@ def test_day_month_year_dates():
         assert data["entries"][0]["dates"] == printed  # kept as printed
         parsed = parse_dates(printed, 2026)
         assert (parsed["start"], parsed["end"]) == (start, end), printed
+
+
+# ---------------------------------------------------------------- dates-only entries are folded
+
+
+def test_dates_only_entry_after_a_job_folds_back():
+    data = _split(["Lecturer, Southgate College of Engineering, 2015 - 2019", "2012 - 2014",
+                   "Professor, Hillcrest University, 2019 - Present"])
+    assert _fields(data) == [("Lecturer", "Southgate College of Engineering", "2015 - 2019"),
+                             ("Professor", "Hillcrest University", "2019 - Present")]
+    assert data["folded_dates_only"] == 1 and "2012 - 2014" in data["sides"][0]["raw_text"]
+
+
+def test_dates_before_a_title_go_forward():
+    data = _split(["Lecturer, Southgate College of Engineering, 2015 - 2019", "2019 - Present",
+                   "Professor, Hillcrest University"])
+    assert _fields(data) == [("Lecturer", "Southgate College of Engineering", "2015 - 2019"),
+                             ("Professor", "Hillcrest University", "2019 - Present")]
+
+
+def test_dates_only_entry_at_the_start_of_a_section_stays():
+    data = _split(["2015 - 2019", "Professor, Hillcrest University, 2019 - Present"])
+    assert _fields(data) == [("", "", "2015 - 2019"), ("Professor", "Hillcrest University", "2019 - Present")]
+    assert data["folded_dates_only"] == 0
+
+
+def test_dates_only_entry_is_not_folded_across_a_section_boundary():
+    lines = [_line(0, "Lecturer, Southgate College of Engineering, 2015 - 2019"), _line(1, "2012 - 2014")]
+    lines[0]["section_start"] = lines[1]["section_start"] = True
+    data = ex.date_anchor_split({"lines": lines, "kinds": ex.mark(lines), "params": PARAMS}).data
+    assert len(data["entries"]) == 2 and data["folded_dates_only"] == 0
+
+
+# ---------------------------------------------------------------- institution-only lines and ordinal days
+# An institution-only line starts a new entry only when the current entry already has an
+# institution; otherwise it joins (after a title, or after dates written before it).
+
+
+def test_institution_line_after_dates_only_joins_them():
+    data = _split(["Lecturer, Southgate College of Engineering, 2015 - 2019", "2012 - 2014", "Hillcrest University"])
+    assert _fields(data) == [("Lecturer", "Southgate College of Engineering", "2015 - 2019"),
+                             ("", "Hillcrest University", "2012 - 2014")]
+
+
+def test_institution_line_after_a_title_without_institution_joins_it():
+    data = _split(["Assistant Professor", "Hillcrest University", "Jul 2019 - Present",
+                   "Lecturer", "Southgate College of Engineering", "2015 - 2019"])
+    assert _fields(data) == [("Assistant Professor", "Hillcrest University", "Jul 2019 - Present"),
+                             ("Lecturer", "Southgate College of Engineering", "2015 - 2019")]
+
+
+def test_institution_first_layout_still_starts_new_entries():
+    data = _split(["Hillcrest University", "Associate Professor", "2019 - 2023",
+                   "Northfield Institute of Science", "Research Scientist", "2015 - 2019"])
+    assert _fields(data) == [("Associate Professor", "Hillcrest University", "2019 - 2023"),
+                             ("Research Scientist", "Northfield Institute of Science", "2015 - 2019")]
+
+
+def test_institution_line_after_a_complete_job_starts_the_next_one():
+    data = _split(["Lecturer, Southgate College of Engineering, 2015 - 2019", "Hillcrest University",
+                   "Professor, 2019 - Present"])
+    assert _fields(data) == [("Lecturer", "Southgate College of Engineering", "2015 - 2019"),
+                             ("Professor", "Hillcrest University", "2019 - Present")]
+
+
+def test_ordinal_days_are_never_years():
+    for printed, start, end in (("9 th June, 2019-30 th June, 2020", "2019-06", "2020-06"),
+                                ("9th June, 2019 - 30th June, 2020", "2019-06", "2020-06"),
+                                ("June 30th, 2019 - Present", "2019-06", None)):
+        data = _split([f"Lecturer, Hillcrest University, {printed}."])
+        assert data["entries"][0]["dates"] == printed
+        parsed = parse_dates(printed, 2026)
+        assert (parsed["start"], parsed["end"]) == (start, end), printed
+    assert find_dates("2019-30th June")[0] == "2019"  # "30th" is a day, not the year 2030

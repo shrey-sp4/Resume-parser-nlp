@@ -1,0 +1,204 @@
+"""Stage 7 (output) and the file writer.
+
+Per resume, under RESUME_DATA_DIR/outputs/:
+- <name>.json       main output, GT v2 format, keys in the order of design 5.1
+- <name>.meta.json  sidecar, sorted keys
+and once per run: run_index.json (sorted keys, resumes sorted by file name).
+
+Every file is checked against its schema before it is written. Files are
+UTF-8 with "\n" line endings, so output is byte-identical on every OS.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from resume_parser.pipeline import run_with_fallbacks
+from resume_parser.schema import (
+    SCHEMA_VERSION,
+    TARGET_SECTIONS,
+    Context,
+    Method,
+    MethodOutput,
+    PipelineRecord,
+    Reason,
+    StageResult,
+    Status,
+    read_json,
+    require_inside_data_root,
+    schema_errors,
+)
+
+MAIN_KEYS = (
+    "resume_file",
+    "candidate_name",
+    "education",
+    "experience",
+    "publications",
+    "stated_totals",
+    "notes",
+)
+ENTRY_KEYS = {
+    "education": ("degree", "degree_level", "stream", "institution"),
+    "experience": ("job_title", "institution", "dates", "experience_type"),
+    "publications": ("title", "type", "year", "venue"),
+}
+TOTALS_KEYS = ("journal", "conference", "total")
+INDEX_FILE = "run_index.json"
+
+
+# ---------------------------------------------------------------- building
+
+
+def _ordered(obj: Any, keys: tuple[str, ...]) -> Any:
+    """Known keys first in the given order, any unknown keys after, sorted.
+
+    Unknown keys are kept so the schema check catches them.
+    """
+    if not isinstance(obj, dict):
+        return obj
+    out = {k: obj[k] for k in keys if k in obj}
+    out.update({k: obj[k] for k in sorted(obj) if k not in keys})
+    return out
+
+
+def build_main(resume_file: str, entities: Any) -> dict:
+    """Build the main JSON from the stage 5 data (see entities/__init__.py)."""
+    entities = entities if isinstance(entities, dict) else {}
+
+    def section(name: str) -> dict:
+        value = entities.get(name)
+        return value if isinstance(value, dict) else {}
+
+    def entries(name: str) -> list:
+        return [_ordered(e, ENTRY_KEYS[name]) for e in section(name).get("entries", [])]
+
+    totals = section("publications").get("stated_totals")
+    if totals is None:
+        totals = {k: None for k in TOTALS_KEYS}
+
+    main = {
+        "resume_file": resume_file,
+        "candidate_name": section("personal").get("candidate_name", ""),
+        "education": entries("education"),
+        "experience": entries("experience"),
+        "publications": entries("publications"),
+        "stated_totals": _ordered(totals, TOTALS_KEYS),
+        "notes": "",
+    }
+    return _ordered(main, MAIN_KEYS)
+
+
+def build_and_validate(ctx: Context) -> MethodOutput:
+    stage5 = ctx.results.get("stage5")
+    main = build_main(ctx.resume_file, stage5.data if stage5 else None)
+    return MethodOutput({"main": main, "errors": schema_errors(main, "resume.schema.json")})
+
+
+def check_main(data: dict) -> float:
+    return 0.0 if data["errors"] else 1.0
+
+
+def run_output(pdf_path: Path, ctx: Context) -> StageResult:
+    """Stage 7: build the main JSON and check it. If it is invalid, only the sidecar is written."""
+    result = run_with_fallbacks(
+        "stage7",
+        (Method("build_and_validate", build_and_validate),),
+        check_main,
+        ctx.thresholds["accept_threshold"]["stage7"],
+        payload=ctx,
+    )
+    errors = result.data["errors"] if result.data else []
+    result.metrics["schema_errors"] = len(errors)
+    if errors:
+        result.status = Status.FAIL
+        result.reasons = [Reason("main_json_invalid", errors[0], "document")]
+        result.data = {"main": None, "errors": errors}
+    return result
+
+
+def build_sidecar(record: PipelineRecord) -> dict:
+    """Sidecar for one resume (design 5.2). Keys are sorted when written."""
+    stage6 = record.results.get("stage6")
+    stage6_data = stage6.data if stage6 and isinstance(stage6.data, dict) else {}
+
+    if record.stopped_at is not None or record.flags:
+        decision = "NEEDS_REVIEW"
+    else:
+        decision = stage6_data.get("decision", "ACCEPT")
+
+    scores = stage6_data.get("section_scores") or {s: None for s in TARGET_SECTIONS}
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "resume_id": record.resume_id,
+        "resume_file": record.resume_file,
+        "decision": decision,
+        "needs_review": decision != "ACCEPT",
+        "flags": list(record.flags),
+        "section_scores": dict(scores),
+        "personal_extra": {"emails": [], "phones": [], "links": []},
+        "provenance": {},
+        "excluded": {"school_level_education": [], "non_paper_publications": []},
+        "parsed_dates": {},
+        "stage_report": {name: result.to_report() for name, result in record.results.items()},
+    }
+
+
+# ---------------------------------------------------------------- writing
+
+
+def dump_json(obj: Any, sort_keys: bool) -> str:
+    return json.dumps(obj, indent=2, ensure_ascii=False, sort_keys=sort_keys) + "\n"
+
+
+def _checked(obj: Any, schema_name: str) -> Any:
+    errors = schema_errors(obj, schema_name)
+    if errors:
+        raise ValueError(f"{schema_name}: {len(errors)} error(s), first: {errors[0]}")
+    return obj
+
+
+def _write(path: Path, text: str) -> None:
+    with Path(path).open("w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+
+
+def write_resume(record: PipelineRecord, out_dir: Path) -> None:
+    """Write the main JSON (when there is one) and the sidecar for one resume."""
+    out_dir = require_inside_data_root(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = Path(record.resume_file).stem
+    main_path = out_dir / f"{stem}.json"
+    if record.main is not None:
+        _write(main_path, dump_json(_checked(record.main, "resume.schema.json"), sort_keys=False))
+    elif main_path.exists():
+        main_path.unlink()  # stale main JSON from an earlier run of the same file
+    sidecar = _checked(record.sidecar, "meta.schema.json")
+    _write(out_dir / f"{stem}.meta.json", dump_json(sidecar, sort_keys=True))
+
+
+def build_index(out_dir: Path) -> dict:
+    """Index of every sidecar in the folder, sorted by resume file name."""
+    resumes = []
+    for path in sorted(Path(out_dir).glob("*.meta.json")):
+        meta = read_json(path)
+        resumes.append(
+            {
+                "decision": meta["decision"],
+                "flags_count": len(meta["flags"]),
+                "resume_file": meta["resume_file"],
+                "resume_id": meta["resume_id"],
+            }
+        )
+    resumes.sort(key=lambda r: r["resume_file"])
+    return {"schema_version": SCHEMA_VERSION, "resumes": resumes}
+
+
+def write_index(out_dir: Path) -> dict:
+    out_dir = require_inside_data_root(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    index = _checked(build_index(out_dir), "run_index.schema.json")
+    _write(out_dir / INDEX_FILE, dump_json(index, sort_keys=True))
+    return index

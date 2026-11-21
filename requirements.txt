@@ -1,0 +1,11 @@
+# Pinned versions. Checked to resolve on Python 3.11 and 3.14 (Windows and Linux wheels).
+pdfplumber==0.11.7
+pdfminer.six==20250506
+jsonschema==4.25.1
+rapidfuzz==3.14.1
+numpy==2.3.3
+scipy==1.16.2
+# Tests and fake resume PDFs only
+pytest==8.4.2
+reportlab==4.4.4
+pillow==13.0.0

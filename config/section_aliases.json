@@ -1,0 +1,8 @@
+{
+  "_comment": "Maps printed section headings to the five canonical names. Aliases are compared after lower-casing and trimming. Experience rule: only headings that list positions held (Work Experience, Employment, Academic Positions, Postdoctoral Positions) map to experience. Headings that list courses taught, responsibilities or projects map to other, and keep their original label. This follows the ground-truth labelling guide (jobs only). A heading that is not listed here falls back to heading look and content, and then to other with a warning.",
+  "personal": [],
+  "education": [],
+  "experience": [],
+  "publications": [],
+  "other": []
+}

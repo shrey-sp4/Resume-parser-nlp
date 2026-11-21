@@ -1,0 +1,89 @@
+"""Command line: data folder checks and validate-gt output (resume IDs only)."""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from resume_parser.cli import main
+from resume_parser.schema import resume_id_for
+from test_schema import VALID_MAIN
+
+
+def test_help_exits_cleanly(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["--help"])
+    assert exc.value.code == 0
+    assert "validate-gt" in capsys.readouterr().out
+
+
+def test_unset_data_dir_gives_one_line_message(monkeypatch, capsys):
+    monkeypatch.delenv("RESUME_DATA_DIR")
+    assert main(["run", "--allow-stubs"]) == 2
+    err = capsys.readouterr().err.strip()
+    assert err.count("\n") == 0 and "RESUME_DATA_DIR" in err
+
+
+def test_missing_data_dir_gives_one_line_message(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("RESUME_DATA_DIR", str(tmp_path / "nowhere"))
+    assert main(["validate-gt"]) == 2
+    assert "RESUME_DATA_DIR" in capsys.readouterr().err
+
+
+def test_validate_gt_prints_ids_only(data_dir, capsys):
+    gt = data_dir / "ground_truth_v2"
+    good = dict(VALID_MAIN, candidate_name="Secret Person")
+    bad = dict(VALID_MAIN, candidate_name="Other Secret", notes=None)
+    (gt / "jane_secret_cv.json").write_text(json.dumps(good), encoding="utf-8")
+    (gt / "john_secret_cv.json").write_text(json.dumps(bad), encoding="utf-8")
+    (gt / "_template.json").write_text("{}", encoding="utf-8")
+
+    assert main(["validate-gt"]) == 1
+    out = capsys.readouterr().out
+    assert f"{resume_id_for('jane_secret_cv.json')} OK" in out
+    assert f"{resume_id_for('john_secret_cv.json')} INVALID" in out
+    assert "notes: type" in out
+    assert "checked 2 file(s), 1 invalid" in out
+    assert "secret" not in out.lower()
+    assert "template" not in out
+
+
+# ---------------------------------------------------------------- stubs guard
+
+
+def test_run_refuses_while_stubs_are_left(data_dir, capsys):
+    import make_synthetic_resumes as synth
+    from resume_parser.pipeline import unimplemented_methods
+
+    synth.build_all(data_dir / "pdfs")
+    assert main(["run"]) == 2
+    captured = capsys.readouterr()
+    stubs = unimplemented_methods()
+    assert stubs
+    for name in stubs:
+        assert f"  {name}\n" in captured.err
+    assert "--allow-stubs" in captured.err
+    assert captured.out == ""  # nothing processed
+    assert list((data_dir / "outputs").iterdir()) == []
+    assert not (data_dir / "reports" / "run_summary.json").exists()
+
+
+def test_run_with_allow_stubs_processes(data_dir, capsys):
+    import make_synthetic_resumes as synth
+
+    synth.build_all(data_dir / "pdfs")
+    assert main(["run", "--allow-stubs"]) == 0
+    assert "--allow-stubs given" in capsys.readouterr().err
+    assert (data_dir / "outputs" / "run_index.json").is_file()
+    assert (data_dir / "reports" / "run_summary.json").is_file()
+
+
+def test_run_without_flag_works_once_no_stubs_are_left(data_dir, monkeypatch, capsys):
+    import make_synthetic_resumes as synth
+    from resume_parser import pipeline
+
+    monkeypatch.setattr(pipeline, "unimplemented_methods", lambda: [])
+    synth.build_all(data_dir / "pdfs")
+    assert main(["run"]) == 0
+    assert (data_dir / "outputs" / "run_index.json").is_file()

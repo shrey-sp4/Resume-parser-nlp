@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "meta.schema.json",
+  "title": "Resume sidecar (docs/design.md section 5.2)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "resume_id",
+    "resume_file",
+    "decision",
+    "needs_review",
+    "flags",
+    "section_scores",
+    "personal_extra",
+    "provenance",
+    "excluded",
+    "parsed_dates",
+    "stage_report"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "resume_id": {"type": "string", "pattern": "^r_[0-9a-f]{8}$"},
+    "resume_file": {"type": "string", "minLength": 1},
+    "decision": {"$ref": "#/$defs/decision"},
+    "needs_review": {"type": "boolean"},
+    "flags": {"type": "array", "items": {"$ref": "#/$defs/flag"}},
+    "section_scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["personal", "education", "experience", "publications"],
+      "properties": {
+        "personal": {"$ref": "#/$defs/score"},
+        "education": {"$ref": "#/$defs/score"},
+        "experience": {"$ref": "#/$defs/score"},
+        "publications": {"$ref": "#/$defs/score"}
+      }
+    },
+    "personal_extra": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["emails", "phones", "links"],
+      "properties": {
+        "emails": {"type": "array", "items": {"type": "string"}},
+        "phones": {"type": "array", "items": {"type": "string"}},
+        "links": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/provenance"}
+    },
+    "excluded": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["school_level_education", "non_paper_publications"],
+      "properties": {
+        "school_level_education": {"type": "array"},
+        "non_paper_publications": {"type": "array"}
+      }
+    },
+    "parsed_dates": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["start", "end"],
+        "properties": {
+          "start": {"type": ["string", "null"]},
+          "end": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "stage_report": {
+      "type": "object",
+      "propertyNames": {"pattern": "^stage[0-7]$"},
+      "additionalProperties": {"$ref": "#/$defs/stage"}
+    }
+  },
+  "$defs": {
+    "decision": {"enum": ["ACCEPT", "NEEDS_REVIEW"]},
+    "status": {"enum": ["OK", "WARN", "FAIL"]},
+    "score": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "section": {
+      "enum": ["personal", "education", "experience", "publications", "other", "document"]
+    },
+    "code": {"type": "string", "pattern": "^[A-Za-z0-9_]+$"},
+    "flag": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["section", "code", "detail"],
+      "properties": {
+        "section": {"$ref": "#/$defs/section"},
+        "code": {"$ref": "#/$defs/code"},
+        "detail": {"type": "string"}
+      }
+    },
+    "reason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "detail", "section"],
+      "properties": {
+        "code": {"$ref": "#/$defs/code"},
+        "detail": {"type": "string"},
+        "section": {"anyOf": [{"$ref": "#/$defs/section"}, {"type": "null"}]}
+      }
+    },
+    "attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "score", "status", "reasons"],
+      "properties": {
+        "method": {"type": "string"},
+        "score": {"$ref": "#/$defs/score"},
+        "status": {"enum": ["ACCEPTED", "BELOW_THRESHOLD", "NO_OUTPUT", "NOT_IMPLEMENTED"]},
+        "reasons": {"type": "array", "items": {"$ref": "#/$defs/code"}}
+      }
+    },
+    "unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method_used", "methods_tried", "status"],
+      "properties": {
+        "method_used": {"type": ["string", "null"]},
+        "methods_tried": {"type": "array", "items": {"$ref": "#/$defs/attempt"}},
+        "status": {"$ref": "#/$defs/status"}
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "metrics", "method_used", "methods_tried", "per_unit", "reasons"],
+      "properties": {
+        "status": {"$ref": "#/$defs/status"},
+        "metrics": {"type": "object"},
+        "method_used": {"type": ["string", "null"]},
+        "methods_tried": {"type": "array", "items": {"$ref": "#/$defs/attempt"}},
+        "per_unit": {"type": "object", "additionalProperties": {"$ref": "#/$defs/unit"}},
+        "reasons": {"type": "array", "items": {"$ref": "#/$defs/reason"}}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page", "lines", "raw_text"],
+      "properties": {
+        "page": {"type": "integer", "minimum": 1},
+        "lines": {"type": "array", "items": {"type": "integer"}},
+        "raw_text": {"type": "string"}
+      }
+    }
+  }
+}

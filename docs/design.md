@@ -25,7 +25,8 @@
    fixed ordering.
 5. **Provenance.** Every extracted field records where it came from (page, line numbers).
 6. **Vocabulary lives in config files**, not in code (headings, degrees, titles, institutions).
-7. **Tests use fake (synthetic) resumes** kept in the repo. Real resumes are never in the repo.
+7. **Tests use fake (synthetic) resumes**, built by `scripts/make_synthetic_resumes.py` into a
+   temporary folder during the tests. No PDF is ever committed. Real resumes are never in the repo.
 
 ## 3. Pipeline overview
 
@@ -48,36 +49,72 @@ are absorbed in stages 1 to 4. After stage 4 every resume looks the same, so the
 rules in stage 5 are written once for one standard form.
 
 Each stage returns: its result, its metrics, its status, and reasons for any WARN/FAIL.
+It also records which method it used and every method it tried (see "Choosing between
+methods" below).
 
 **What a FAIL does.**
 - FAIL in stage 0 or 1: stop. There is no usable text, so nothing later can be trusted.
-  The resume goes to the review queue with the reason.
-- WARN or FAIL in stages 2 to 5: carry on, but mark the resume and the affected section.
+  Only a sidecar and an index entry are written, with the reason. (Nothing is written to
+  `review_queue/` yet; the index shows the decision.)
+- WARN or FAIL in stages 2 to 7: carry on, but mark the resume and the affected section.
   The JSON is still written, with `needs_review: true` and the reasons, so no information is lost.
+- Reason codes that only say a method is not built yet (`not_implemented`) are kept in the
+  stage report but are not flags.
+
+**Choosing between methods.** Every stage has a fixed, ordered chain of named methods.
+A shared helper in the runner (`run_with_fallbacks`) does the choosing:
+1. Run the methods in order. After each one, compute the stage's check score in [0, 1].
+2. Stop at the first result whose score reaches the stage's accept threshold
+   (`config/thresholds.json`). Otherwise try the next method.
+3. If no method reaches the threshold, keep the best-scoring result and set WARN.
+   Ties go to the earlier method.
+4. If no method gives any output: FAIL for stages 0 and 1, WARN for later stages.
+   Methods that are not built yet are recorded but never chosen. While any method in the
+   chain is still unbuilt, "no output" gives OK with the code `not_implemented` instead,
+   because the unit cannot be judged yet. The exception is a unit that must give output
+   (an image-only page in stage 1): it FAILs. This rule only lets the skeleton run in tests:
+   each unbuilt method is marked `stub`, and `cli run` refuses to start while any are left,
+   listing them, unless `--allow-stubs` is given.
+5. Some methods are last resorts that always give WARN when chosen
+   (`whole_section_one_entry`, `from_file_name`, `keep_as_other_with_warning`).
+
+The choice is made per unit where layouts differ inside one resume: per page in stage 1, per
+section in stage 5. The stage report records the method used and every method tried
+(name, score, status, reason codes), per unit where the stage uses units. The same input
+always picks the same method.
 
 ## 4. Stages in detail
 
 ### Stage 0: Intake and triage
 - Job: confirm the file is a valid, unencrypted PDF; count pages; check there is a text layer.
-- Fallback: none. If there is no text layer, flag "needs OCR" (OCR is a later add-on, non-LLM).
+- Methods: `open_pdfplumber`, then `open_pdfminer`. If neither can read the file: FAIL `unreadable`.
+- Page profile, per page: text characters, share of the page covered by images, and a class
+  `TEXT`, `IMAGE_ONLY` or `MIXED`; `table_present`; `two_column_hint` (few text lines cross the
+  middle of the page while both halves have text). A blank page counts as `IMAGE_ONLY`.
+  Cut-offs are in `config/thresholds.json` under `page_profile`.
 - Checks: valid PDF; at least 200 text characters per page on average.
-- Gate: FAIL stops the resume.
+- Gate: FAIL (unreadable) stops the resume. Low or no text gives WARN `needs_ocr`, and
+  stage 1 decides whether the pages are usable (so OCR gets a chance to run).
 
 ### Stage 1: Layout extraction
 - Job: turn the PDF into a list of **lines**, each with: text, page, bounding box,
   font size, bold, whether inside a table cell, reading-order index.
-- Main: pdfplumber (words with coordinates, tables read cell by cell).
-- Fallback 1: pdfminer.six layout analysis. Fallback 2: another extractor only if its licence
-  is compatible with a public repo (PyMuPDF is AGPL: check before using).
-- Method: run the main extractor, check quality; if the checks fail, try the fallback and keep
-  the better result.
+- Methods, chosen per page: `pdfplumber_words_tables` (words with coordinates, tables read cell
+  by cell); `pdfminer_layout`; `pdfplumber_loose_spacing` (looser word spacing, for glued words);
+  `ocr_tesseract`. Any further extractor only if its licence is compatible with a public repo
+  (PyMuPDF is AGPL: check before using).
+- OCR is an optional dependency (pytesseract and the tesseract program). If it is not
+  installed, the method reports `ocr_unavailable`.
+- Pages that stage 0 marked `IMAGE_ONLY` only try OCR. If that gives nothing, the page is
+  FAIL `no_text_layer`.
 - Checks: share of garbled characters (`(cid:N)`, replacement characters) under 1%; glued-word
   rate low; agreement with the second extractor's words at least 90%; no empty pages.
-- Gate: FAIL if both extractors fail the checks.
+- Gate: FAIL only when no page is usable. Some unusable pages give WARN.
 
 ### Stage 2: Cleaning
 - Job: remove repeated page headers and footers; remove bullet and icon glyphs; join lines that
   wrap; fix hyphenation; normalise unicode and spaces.
+- Methods: `full_clean`; `conservative_clean` (glyphs and whitespace only); `raw_lines` (no change).
 - Check: letters and digits kept at least 95% (excluding removed headers, footers, glyphs).
   A drop means the cleaner deleted real content.
 - Gate: WARN if below the threshold; use the uncleaned lines for that page.
@@ -89,8 +126,8 @@ Each stage returns: its result, its metrics, its status, and reasons for any WAR
 - Signals: heading words from `config/section_aliases.json`; heading look (larger relative font,
   bold, all caps, short line, white space above); the content that follows (dates, degree
   words, citation patterns).
-- Fallbacks: (1) heading vocabulary, (2) heading look, (3) content patterns for lines with no
-  heading. A small classifier can be added later if data allows.
+- Methods: `heading_vocabulary`, `heading_look`, `content_patterns` (for lines with no
+  heading). A small classifier can be added later if data allows.
 - Checks: personal block found near the top; at least one of education, experience, publications
   found; unassigned lines that look like dates, degrees or citations are within a small limit;
   short bold or capitalised lines that look like headings but are unknown are listed.
@@ -112,9 +149,9 @@ Each stage returns: its result, its metrics, its status, and reasons for any WAR
 - **Standard form of the lines:** one line per logical line, bullets and icons removed, wrapped
   lines joined, spaces and unicode normalised, original text otherwise untouched (dates stay as
   printed). Each line keeps its id, page and position, so provenance survives.
-- Fallbacks: if a heading is not in the alias map, use the heading look (bigger font, bold, caps)
-  and the content that follows; if still unknown, the section is `other` with the original label
-  and a WARN.
+- Methods: `exact_alias_map`; `fuzzy_alias_match` (rapidfuzz against the alias map);
+  `keep_as_other_with_warning` (the section is `other` with the original label and a WARN).
+  Heading look and the content that follows come from stage 3.
 - Checks: every cleaned line is in exactly one section (or `unassigned`); line order is kept;
   joining the canonical lines gives back the cleaned text (no loss, no duplication);
   all section names are from the allowed list; no target-looking lines (dates, degrees,
@@ -157,8 +194,10 @@ are kept in the sidecar) from the heading and venue words. The raw citation goes
 Remove duplicates. Talks, posters, newspaper articles go to `non_paper_publications` in the
 sidecar. Also read printed totals ("Total: 65") into `stated_totals`.
 
-**Fallback for all entry splitting:** anchors, then blank-line splitting, then the whole section
-as one entry with a WARN.
+**Methods for entry splitting, chosen per section:** `anchor_split`, `table_row_split`,
+`paragraph_split`, then `whole_section_one_entry` (always last, always WARN).
+**Methods for the name:** `top_lines`, `from_email`, `from_file_name` (lowest confidence, flagged).
+Accept thresholds per section are in `config/thresholds.json`.
 
 **Field normalization** (the values that the ground-truth format needs):
 - `degree_level` (doctorate / masters / bachelors / other) from `config/degrees.json`.
@@ -187,11 +226,16 @@ stored in the sidecar file.
 - Each section gets a score from its checks (weighted share of checks passed).
 - Decision: **ACCEPT** if every target section meets its threshold. Otherwise **NEEDS_REVIEW**,
   with the section names and reasons.
-- Thresholds live in `config/thresholds.yaml` and are chosen from ground truth (section 7).
+- Thresholds live in `config/thresholds.json` and are chosen from ground truth (section 7).
+  Until then they are placeholders, marked as to be calibrated.
 
 ### Stage 7: Output
-- Two files per resume, plus one index file per run, all in the data folder (never in the repo).
+- Two files per resume, plus one index file and one run summary per run, all in the data
+  folder (never in the repo).
 - Resumes with stage-0/1 failures get a sidecar and an index entry only (no main JSON).
+- The main JSON is checked against `schema/resume.schema.json`. If it is invalid, only the
+  sidecar is written, with a FAIL flag `main_json_invalid`.
+- Every file is checked against its schema before it is written.
 - No timestamps, no absolute paths. Keys and lists in a fixed order.
 
 ## 5. Output format
@@ -232,7 +276,8 @@ industry, other}; publication `type` in {journal, conference, other}.
 ```json
 {
   "schema_version": "1.0",
-  "resume_id": "r_0001",
+  "resume_id": "r_0a1b2c3d",
+  "resume_file": "xyz.pdf",
   "decision": "ACCEPT",
   "needs_review": false,
   "flags": [{"section": "education", "code": "UNASSIGNED_TARGET_LINES", "detail": ""}],
@@ -241,18 +286,53 @@ industry, other}; publication `type` in {journal, conference, other}.
   "provenance": {"education[0]": {"page": 1, "lines": [10, 12], "raw_text": ""}},
   "excluded": {"school_level_education": [], "non_paper_publications": []},
   "parsed_dates": {"experience[0]": {"start": "2016-07", "end": "2023-03"}},
-  "stage_report": {"stage1": {"status": "OK", "metrics": {}}}
+  "stage_report": {
+    "stage1": {
+      "status": "OK", "metrics": {}, "reasons": [],
+      "method_used": "per_unit", "methods_tried": [],
+      "per_unit": {
+        "page_001": {
+          "method_used": "pdfplumber_words_tables", "status": "OK",
+          "methods_tried": [{"method": "pdfplumber_words_tables", "score": 0.97,
+                             "status": "ACCEPTED", "reasons": []}]
+        }
+      }
+    }
+  }
 }
 ```
+- `resume_id` is `"r_"` plus the first 8 hex characters of the SHA-256 of the file stem, so
+  logs never show a file name (which may contain a candidate's name). A PDF and its ground-truth
+  file get the same id.
+- Flag `section` is one of `personal`, `education`, `experience`, `publications`, `other`,
+  `document`.
+- Attempt `status` is one of `ACCEPTED`, `BELOW_THRESHOLD`, `NO_OUTPUT`, `NOT_IMPLEMENTED`.
+- The main JSON keeps the key order of 5.1. The sidecar, index and run summary use sorted keys.
+- Schema: `schema/meta.schema.json`.
+
 Why a separate file: the main JSON stays identical to the ground truth, and the extra information
 (flags, provenance, raw text, email and phone) is still available when someone asks
 "why was this flagged?" or "where did this value come from?".
 
 ### 5.3 Run index
 
-`outputs/run_index.json`: for each resume, its `resume_file`, `decision` and flags count.
+`outputs/run_index.json`: for each resume, its `resume_file`, `resume_id`, `decision` and
+`flags_count`, sorted by file name. It is rebuilt from every sidecar in `outputs/` after each run.
 The shortlisting system reads the index so it knows which resumes were accepted and which are
 flagged. (A flagged resume still has its main JSON, so the recruiter can still see it.)
+Schema: `schema/run_index.schema.json`.
+
+### 5.4 Run summary (funnel report)
+
+`reports/run_summary.json`, written after every batch from every sidecar in `outputs/`.
+Resume IDs only, sorted keys:
+- per stage: how many resumes entered it, and how many ended OK, WARN or FAIL, or stopped there;
+  plus `not_implemented`, the number of choices passed as OK only because the methods are not
+  built yet (pages in stage 1, sections in stage 5, one per resume elsewhere)
+- method usage counts per stage (per unit for stages 1 and 5), and the number of fallbacks used
+  (choices where the chosen method was not the first built method)
+- the most common reason codes
+- flagged resume IDs, each with the section and code of every flag
 
 ## 6. Evaluation (offline, uses ground truth)
 
@@ -288,11 +368,12 @@ Report: of the accepted resumes, how many are fully correct; and what share go t
 resume-parser/
   README.md  LICENSE  pyproject.toml  requirements.txt  .gitignore
   .githooks/pre-commit  .github/workflows/ci.yml
-  config/   section_aliases.json  degrees.json  titles.json  institutions.json  thresholds.yaml
-  schema/   resume.schema.json
+  config/   section_aliases.json  degrees.json  titles.json  institutions.json  thresholds.json
+  schema/   resume.schema.json  meta.schema.json  run_index.schema.json
   src/resume_parser/
-     intake.py  pipeline.py  cli.py  schema.py  report.py
-     extract/  base.py  pdfplumber_extractor.py  pdfminer_extractor.py
+     intake.py  pipeline.py  cli.py  schema.py
+     report.py                                   (run summary, section 5.4)
+     extract/  base.py  pdfplumber_extractor.py  pdfminer_extractor.py  ocr_extractor.py
      clean.py  sections.py  normalize.py        (normalize.py builds the Canonical Document)
      entities/ personal.py  education.py  experience.py  publications.py
      field_norm.py  validate.py  scoring.py  writer.py   (writer.py writes main JSON + sidecar + index)
@@ -309,7 +390,10 @@ resume-parser/
   `pdfs/`, `ground_truth_v2/`, `outputs/`, `review_queue/`, `reports/`.
 - Back it up somewhere private. Git will not have a copy.
 - Guards: `.gitignore`, a pre-commit hook and a CI check (`scripts/check_no_data.py`) that
-  refuse PDFs, real JSON outside `config/` and `schema/` and `fixtures/`, and large files.
+  refuse PDFs, JSON outside `config/`, `schema/`, `fixtures/` and `docs/`, any file larger than
+  1 MB, and banned tool names in file paths or contents. Turn the hook on once per clone with
+  `git config core.hooksPath .githooks`.
+- Output is written only under `RESUME_DATA_DIR`; the writer refuses any other folder.
 - Logs and test output show resume IDs, never names.
 
 ## 10. Build order and "done" for each stage

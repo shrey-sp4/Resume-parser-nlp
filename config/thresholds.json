@@ -1,0 +1,35 @@
+{
+  "_comment": "Placeholder values. Every number in this file is to be calibrated on dev (docs/design.md, section 7) before it is trusted.",
+  "accept_threshold": {
+    "stage0": 1.0,
+    "stage1": 0.9,
+    "stage2": 0.95,
+    "stage3": 0.8,
+    "stage4": 0.9,
+    "stage5": 0.8,
+    "stage6": 1.0,
+    "stage7": 1.0
+  },
+  "accept_threshold_by_section": {
+    "personal": 0.8,
+    "education": 0.8,
+    "experience": 0.8,
+    "publications": 0.8,
+    "other": 0.5
+  },
+  "section_score_threshold": {
+    "personal": 0.8,
+    "education": 0.8,
+    "experience": 0.8,
+    "publications": 0.8
+  },
+  "page_profile": {
+    "min_text_chars": 20,
+    "low_text_chars_per_page": 200,
+    "mixed_image_share": 0.1,
+    "center_strip": [0.45, 0.55],
+    "segment_gap_pt": 15,
+    "two_column_max_crossing_share": 0.1,
+    "two_column_min_half_share": 0.2
+  }
+}

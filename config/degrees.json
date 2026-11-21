@@ -1,0 +1,8 @@
+{
+  "_comment": "Degree words and the degree_level they map to. school_level entries are kept out of the main JSON (sidecar 'excluded'). Placeholder: to be filled from the old repo and dev data.",
+  "doctorate": [],
+  "masters": [],
+  "bachelors": [],
+  "other": [],
+  "school_level": []
+}

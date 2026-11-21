@@ -1,0 +1,7 @@
+#!/bin/sh
+# Stop the commit if it would add resumes, real JSON, large files or banned words.
+# Turn it on once per clone with: git config core.hooksPath .githooks
+python scripts/check_no_data.py || {
+    echo "pre-commit: commit refused, see the problems above."
+    exit 1
+}

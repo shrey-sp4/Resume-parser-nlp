@@ -1,0 +1,6 @@
+{
+  "_comment": "Words and names used to find institutions and to set experience_type (academic words -> academic, company words -> industry, otherwise other). Placeholder: to be filled from the old repo and dev data.",
+  "academic_keywords": [],
+  "industry_keywords": [],
+  "known_institutions": []
+}

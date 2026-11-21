@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "run_index.schema.json",
+  "title": "Run index (docs/design.md section 5.3)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "resumes"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "resumes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["decision", "flags_count", "resume_file", "resume_id"],
+        "properties": {
+          "decision": {"enum": ["ACCEPT", "NEEDS_REVIEW"]},
+          "flags_count": {"type": "integer", "minimum": 0},
+          "resume_file": {"type": "string", "minLength": 1},
+          "resume_id": {"type": "string", "pattern": "^r_[0-9a-f]{8}$"}
+        }
+      }
+    }
+  }
+}

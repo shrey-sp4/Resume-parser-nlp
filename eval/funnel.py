@@ -40,8 +40,15 @@ Each lost item also gets the method that handled it, from the stage records: the
 method of the page that matches it best (S1), the stage 3 and stage 4 methods (S4), or the
 stage 5 method of its section (S5).
 
+Items lost at S5 get one cause: not extracted (no predicted entry holds the item's key text),
+merged into another entry (a predicted entry holds it together with another GT item, or is
+matched to another GT item), split into fragments (its key fields are spread over 2 or more
+predicted entries), or wrong fields (a predicted entry holds it but its fields do not match;
+for a matched entry with a wrong field, "wrong fields: <field>").
+
 False positives (unmatched predictions) get the FIRST matching cause, in this order:
-school-level entry; table header or skills line; non-paper publication; duplicate of an
+school-level entry; table header or skills line (only for an entry with no degree or job title,
+no institution and no year); non-paper publication; duplicate of an
 already-matched GT item; wrapped-line fragment; bleed from another section; other. The rules
 are defined once below (from category definitions, not fitted per resume) and are heuristics.
 
@@ -288,8 +295,11 @@ def classify_fp(sec: str, p, gt_all: dict, matched_gt: set, matched_pred_texts: 
         return "school-level entry"
     if sec in ("education", "experience"):
         words = set(t.split())
-        if (len(words & HEADER_WORDS) >= 2 and not re.search(r"\b(?:19|20)\d{2}\b", t)) \
-                or (SKILLS.search(t) and len(t) < 80) or (len(t) < 25 and not re.search(r"\d", t)):
+        main = ev._s(p.get("degree") if sec == "education" else p.get("job_title"))
+        # a header or skills line has no degree / job title, no institution and no year
+        bare = not main and not ev._s(p.get("institution")) and not re.search(r"\b(?:19|20)\d{2}\b", raw)
+        if bare and (len(words & HEADER_WORDS) >= 2 or (SKILLS.search(t) and len(t) < 80)
+                     or (len(t) < 25 and not re.search(r"\d", t))):
             return "table header or skills line"
     if sec == "publications" and NON_PAPER.search(t) and not CITATION.search(raw):
         return "non-paper publication"
@@ -359,9 +369,9 @@ def diagnose_resume(gt: dict, pred: dict | None, st: dict, eid: str):
             it["cause"] = (f"wrong section: {best}" if best and sec_scores[best] >= FOUND_LO
                            else "in text but in no section")
         elif matched_pred is None:
-            it["lost_at"], it["cause"] = "S5 entry", "no matching predicted entry"
+            it["lost_at"], it["cause"] = "S5 entry", "not extracted"  # refined by s5_cause
         elif field_bad:
-            it["lost_at"], it["cause"] = "S5 fields", "wrong: " + ",".join(field_bad)
+            it["lost_at"], it["cause"] = "S5 fields", "wrong fields: " + ",".join(field_bad)
         else:
             it["lost_at"], it["cause"] = "ok", ""
         it["method"] = method_for(sec, it["lost_at"], fn, st)
@@ -385,6 +395,8 @@ def diagnose_resume(gt: dict, pred: dict | None, st: dict, eid: str):
     if gname:
         m = pname if (pname and ev.norm_name(pname) == ev.norm_name(gname)) else None
         trace("name", 0, [gname], gname, m, [] if pname == gname else (["exact form"] if m else []))
+        if items and items[-1]["section"] == "name" and items[-1]["lost_at"] == "S5 entry":
+            items[-1]["cause"] = "wrong fields" if pname else "not extracted"
     # entries
     for sec in ("education", "experience", "publications"):
         g, p = gt_all[sec], pr.get(sec) or []
@@ -393,8 +405,11 @@ def diagnose_resume(gt: dict, pred: dict | None, st: dict, eid: str):
         for gi, ge in enumerate(g):
             pi = by_g.get(gi)
             mp = p[pi] if pi is not None else None
+            before = len(items)
             trace(sec, gi, [ge.get(k) for k in KEY_FIELDS[sec]], ev._s(ge.get(MAIN_FIELD[sec])),
                   mp, ev.field_errors(sec, ge, mp) if mp is not None else [])
+            if len(items) > before and items[-1]["lost_at"] == "S5 entry":
+                items[-1]["cause"] = s5_cause(sec, gi, g, p, by_g)
         matched_p = {pi for _, pi, _ in pairs}
         matched_texts = [snorm(fp_text(sec, p[pi])) for pi in sorted(matched_p)]
         for pi, pe in enumerate(p):
@@ -402,6 +417,52 @@ def diagnose_resume(gt: dict, pred: dict | None, st: dict, eid: str):
                 fps.append({"eval_id": eid, "section": sec, "idx": pi,
                             "cause": classify_fp(sec, pe, gt_all, set(by_g), matched_texts)})
     return items, fps
+
+
+# ---- S5 loss causes ------------------------------------------------------------------------
+
+
+def _key_text(sec: str, entry: dict) -> list[str]:
+    return [snorm(entry.get(k)) for k in KEY_FIELDS[sec] if ev._s(entry.get(k))]
+
+
+def s5_cause(sec: str, gi: int, gts: list[dict], preds: list[dict], by_g: dict[int, int]) -> str:
+    """Why GT item gi has no matching predicted entry (see the module docstring)."""
+    fields = _key_text(sec, gts[gi])
+    pred_texts = [snorm(fp_text(sec, pe)) for pe in preds]
+    holding = [pi for pi, text in enumerate(pred_texts) if fields and (find_all(fields, text) or 0.0) >= FOUND_LO]
+    taken = set(by_g.values())
+    for pi in holding:
+        others = [gj for gj, ge in enumerate(gts) if gj != gi and _key_text(sec, ge)
+                  and (find_all(_key_text(sec, ge), pred_texts[pi]) or 0.0) >= FOUND_LO]
+        if pi in taken or others:
+            return "merged into another entry"
+    if holding:
+        return "wrong fields"
+    if len(fields) >= 1 and all(any((find(f, text) or 0.0) >= FOUND_LO for text in pred_texts) for f in fields) \
+            and len(fields) > 1:
+        return "split into fragments"
+    return "not extracted"
+
+
+# education false positives are reported in five groups
+FP_GROUP = {"school-level entry": "school-level", "table header or skills line": "header row",
+            "bleed from another section": "bleed from another section",
+            "duplicate of an already-matched GT item": "split fragment", "wrapped-line fragment": "split fragment"}
+FP_GROUPS = ("school-level", "header row", "bleed from another section", "split fragment", "other")
+
+
+def fp_group(cause: str) -> str:
+    return FP_GROUP.get(cause, "other")
+
+
+def stage5_methods(results: dict) -> dict:
+    """{(section, method): {group: count}} from the stage 5 records (dev and tuned)."""
+    out: dict = defaultdict(Counter)
+    for g, r in results.items():
+        for section, method in r.get("stage5_methods", []):
+            out[(section, method)][g] += 1
+    return out
 
 
 # ---- check validity ------------------------------------------------------------------------
@@ -553,7 +614,14 @@ def method_counts(results: dict):
 def print_fps(results: dict) -> None:
     groups = list(results)
     print(f"\n  {'section':<14}{'cause':<46}" + "".join(f"{g:>12}" for g in groups))
-    for sec in ("education", "experience", "publications"):
+    tot = {g: sum(1 for f in results[g]["fps"] if f["section"] == "education") for g in groups}
+    for c in FP_GROUPS:
+        cnt = {g: sum(1 for f in results[g]["fps"] if f["section"] == "education" and fp_group(f["cause"]) == c)
+               for g in groups}
+        if any(cnt.values()):
+            print(f"  {'education':<14}{c:<46}" + "".join(f"{cnt[g]:>12}" for g in groups))
+    print(f"  {'education':<14}{'TOTAL':<46}" + "".join(f"{tot[g]:>12}" for g in groups))
+    for sec in ("experience", "publications"):
         tot = {g: sum(1 for f in results[g]["fps"] if f["section"] == sec) for g in groups}
         for c in FP_CAUSES:
             cnt = {g: sum(1 for f in results[g]["fps"] if f["section"] == sec and f["cause"] == c) for g in groups}
@@ -609,19 +677,22 @@ def run(a: argparse.Namespace) -> int:
 
     results = {}
     for g in order:
-        items, fps, incomplete, checks = [], [], 0, []
+        items, fps, incomplete, checks, methods5 = [], [], 0, [], []
         for stem in groups[g]:
             st = load_stages(stem)
             incomplete += not st["complete"]
             it, fp = diagnose_resume(ev.load_gt(stem), ev.load_pred(stem), st, ids[stem]["eval_id"])
             items += it
             fps += fp
+            per_unit = (st["records"]["stage5"] or {}).get("per_unit") or {}
+            methods5 += [(sec, (per_unit.get(sec) or {}).get("method_used") or "none")
+                         for sec in ("personal", "education")]
             if g != "test_frozen":  # never looked at per resume for test_frozen
                 fired = load_checks(stem)
                 if fired is not None:
                     checks.append((fired, {(i["lost_at"], i["section"]) for i in it if i["lost_at"] != "ok"}))
         results[g] = {"items": items, "fps": fps, "incomplete": incomplete, "n": len(groups[g]),
-                      "checks": checks}
+                      "checks": checks, "stage5_methods": methods5}
         if g != "test_frozen":
             out = common.reports_dir() / "funnel"
             common.write_text_inside(out / f"items_{g}.jsonl", _jsonl(items))
@@ -652,6 +723,17 @@ def run(a: argparse.Namespace) -> int:
     print(f"  {'section':<13}{'stage':<12}{'method':<52}" + "".join(f"{g:>12}" for g in results))
     for (sec, st, method), cnt in method_counts(results):
         print(f"  {sec:<13}{st:<12}{method[:51]:<52}" + "".join(f"{cnt[g]:>12}" for g in results))
+    print("\n=== ITEMS LOST AT S5, BY CAUSE ===")
+    print(f"  {'section':<14}{'cause':<40}" + "".join(f"{g:>12}" for g in results))
+    causes5 = sorted({(i["section"], i["cause"].split(":")[0]) for r in results.values() for i in r["items"]
+                      if i["lost_at"] in ("S5 entry", "S5 fields")})
+    for sec, cause in causes5:
+        cnt = {g: sum(1 for i in r["items"] if i["lost_at"] in ("S5 entry", "S5 fields") and i["section"] == sec
+                      and i["cause"].split(":")[0] == cause) for g, r in results.items()}
+        print(f"  {sec:<14}{cause:<40}" + "".join(f"{cnt[g]:>12}" for g in results))
+    print("\n=== STAGE 5 METHOD PER SECTION (resumes) ===")
+    for (sec, method), cnt in sorted(stage5_methods(results).items()):
+        print(f"  {sec:<14}{method:<40}" + "".join(f"{cnt[g]:>12}" for g in results))
     print("\n=== FALSE-POSITIVE CAUSES (unmatched predictions) ===")
     print_fps(results)
     print("\n=== CHECK VALIDITY (dev + tuned): does a check fire where a real loss is? ===")

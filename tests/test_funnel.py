@@ -58,7 +58,7 @@ def test_each_removed_item_is_lost_at_the_right_stage(data_dir, capsys):
     assert items[("education", 2)]["cause"] == "wrong section: other"
     assert items[("experience", 2)]["lost_at"] == "S5 entry"
     assert items[("experience", 1)]["lost_at"] == "S5 fields"
-    assert items[("experience", 1)]["cause"] == "wrong: dates"
+    assert items[("experience", 1)]["cause"] == "wrong fields: dates"
 
     cut = items[("publications", 0)]
     assert cut["lost_at"] == "ok" and cut["completeness"] == "truncated" and cut["cut_at"] == "S5 entry"
@@ -81,7 +81,7 @@ def test_false_positive_cause_and_methods_are_reported(data_dir, capsys):
     assert items[("education", 2)]["method"] == "stage3 heading_vocabulary / stage4 exact_alias_map"
     method_lines = out.split("=== METHOD THAT HANDLED EACH LOST ITEM ===")[1].split("===")[0]
     assert "S5 entry" in method_lines and "stage5 anchor_split" in method_lines
-    assert "school-level entry" in out
+    assert "school-level" in out.split("FALSE-POSITIVE CAUSES")[1]  # the education group
 
 
 def test_resume_without_stage_files_is_reported(data_dir, capsys):
@@ -94,8 +94,9 @@ def test_resume_without_stage_files_is_reported(data_dir, capsys):
 
 
 def test_runs_on_stage_files_saved_by_the_pipeline(data_dir, capsys):
-    """Real stage 1-4 files from the pipeline: every GT item of the fake resumes is found in
-    the stage 1 lines and in the right section (stage 5 is still a stub, so items stop at S5)."""
+    """Real stage files from the pipeline: every GT item of the fake resumes is found in the
+    stage 1 lines and the right section; name and education are extracted, experience and
+    publications (still stubs) stop at S5."""
     synth.build_all(data_dir / "pdfs")
     assert cli_main(["run", "--allow-stubs", "--save-stages"]) == 0
     write_ground_truth(data_dir)
@@ -104,7 +105,10 @@ def test_runs_on_stage_files_saved_by_the_pipeline(data_dir, capsys):
     for group in ("dev", "tuned"):
         items = _items(data_dir, group).values()
         assert items and all(r["s1_ge95"] for r in items), [r["lost_at"] for r in items]
-        assert all(r["lost_at"] == "S5 entry" for r in items), [(r["section"], r["lost_at"]) for r in items]
+        stub = [r for r in items if r["section"] in ("experience", "publications")]
+        built = [r for r in items if r["section"] in ("name", "education")]
+        assert all(r["lost_at"] == "S5 entry" for r in stub)
+        assert built and all(r["lost_at"] in ("ok", "S5 fields") for r in built),             [(r["section"], r["idx"], r["lost_at"], r["cause"]) for r in built]
 
 
 # ---------------------------------------------------------------- test_frozen guard
@@ -264,3 +268,11 @@ def test_check_validity_table_is_printed_from_sidecars(data_dir, capsys):
     table = out.split("=== CHECK VALIDITY")[1]
     assert "stage5" in table and "not_implemented" in table  # stage 5 is a stub, so items are lost there
     assert "test_frozen" not in table
+
+
+def test_header_label_needs_an_entry_without_degree_institution_or_year():
+    gt_all = {"education": [], "experience": [], "publications": []}
+    real = {"degree": "M.Sc.", "stream": "", "institution": "Lakeside University", "dates": ""}
+    header = {"degree": "", "stream": "Board University Year", "institution": "", "dates": ""}
+    assert funnel.classify_fp("education", real, gt_all, set(), []) != "table header or skills line"
+    assert funnel.classify_fp("education", header, gt_all, set(), []) == "table header or skills line"

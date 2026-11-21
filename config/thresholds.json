@@ -98,5 +98,12 @@
     "_comment": "Stage 4 heading mapping and document checks. To calibrate on dev. fuzzy_min is fuzz.ratio (0-100) on the whole normalised heading; leak_max is the share of target-looking lines allowed in other or unassigned.",
     "fuzzy_min": 90,
     "leak_max": 0.1
+  },
+  "stage5_entities": {
+    "_comment": "Stage 5 settings. To calibrate on dev. current_year is set here (not read from the clock) so runs are reproducible; update it once a year.",
+    "name_top_lines": 8,
+    "paragraph_gap_ratio": 1.0,
+    "current_year": 2026,
+    "year_max_offset": 6
   }
 }

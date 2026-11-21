@@ -27,7 +27,9 @@ def test_main_json_is_valid_and_has_empty_fields(synthetic_pdfs):
         "resume_file", "candidate_name", "education", "experience", "publications", "stated_totals", "notes"
     ]
     assert record.main["resume_file"] == "synthetic_b_table.pdf"
-    assert record.main["education"] == []
+    assert record.main["candidate_name"] == "Jonas Fakely"
+    assert [e["degree"] for e in record.main["education"]] == ["Ph.D.", "M.Tech.", "B.Tech."]
+    assert record.main["experience"] == [] and record.main["publications"] == []  # still stubs
 
 
 def test_method_chains_are_registered_in_order():
@@ -48,9 +50,9 @@ def test_method_chains_are_registered_in_order():
 def test_stage5_chooses_per_section(synthetic_pdfs):
     stage5 = run_pipeline(synthetic_pdfs[0]).results["stage5"]
     assert list(stage5.per_unit) == ["personal", "education", "experience", "publications"]
-    assert [a.method for a in stage5.per_unit["personal"].methods_tried] == [
-        "top_lines", "from_email", "from_file_name"
-    ]
+    assert stage5.per_unit["personal"].method_used == "top_lines"  # accepted first, the rest not run
+    assert stage5.per_unit["education"].method_used == "anchor_split"
+    assert stage5.per_unit["experience"].method_used is None  # still stubs
 
 
 def test_stub_flags_match_what_the_methods_return():
@@ -64,7 +66,8 @@ def test_stub_flags_match_what_the_methods_return():
                 assert method.fn(None).implemented is False, f"{stage}: {method.name}"
                 listed.append(f"{stage}: {method.name}")
     assert sorted(listed) == unimplemented_methods()
-    assert "stage5.personal: top_lines" in listed
+    assert "stage5: anchor_split" in listed  # experience and publications are still stubs
+    assert not [m for m in listed if m.startswith(("stage5.personal", "stage5.education"))]
 
 
 def test_stages_0_to_2_have_no_stubs_left():

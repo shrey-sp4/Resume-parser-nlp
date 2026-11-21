@@ -121,6 +121,26 @@ def run_output(pdf_path: Path, ctx: Context) -> StageResult:
     return result
 
 
+def _stage5_sidecar(record: PipelineRecord) -> tuple[dict, dict, dict]:
+    """personal_extra, provenance and excluded from the stage 5 data (empty when stage 5 did
+    not run). Provenance keys follow the main JSON: candidate_name, education[0], ..."""
+    stage5 = record.results.get("stage5")
+    data = stage5.data if stage5 is not None and isinstance(stage5.data, dict) else {}
+    personal = data.get("personal") if isinstance(data.get("personal"), dict) else {}
+    education = data.get("education") if isinstance(data.get("education"), dict) else {}
+    extra = {"emails": [], "phones": [], "phone_digits": [], "links": []}
+    extra.update(personal.get("personal_extra") or {})
+    provenance = {}
+    source = personal.get("name_source") or {}
+    if source.get("page"):
+        provenance["candidate_name"] = {"page": source["page"], "lines": list(source["lines"]), "raw_text": ""}
+    for i, side in enumerate(education.get("sides") or []):
+        provenance[f"education[{i}]"] = dict(side)
+    excluded = {"school_level_education": [dict(s) for s in education.get("excluded") or []],
+                "non_paper_publications": []}
+    return extra, provenance, excluded
+
+
 def build_sidecar(record: PipelineRecord) -> dict:
     """Sidecar for one resume (design 5.2). Keys are sorted when written."""
     stage6 = record.results.get("stage6")
@@ -132,6 +152,7 @@ def build_sidecar(record: PipelineRecord) -> dict:
         decision = stage6_data.get("decision", "ACCEPT")
 
     scores = stage6_data.get("section_scores") or {s: None for s in TARGET_SECTIONS}
+    extra, provenance, excluded = _stage5_sidecar(record)
     return {
         "schema_version": SCHEMA_VERSION,
         "resume_id": record.resume_id,
@@ -140,9 +161,9 @@ def build_sidecar(record: PipelineRecord) -> dict:
         "needs_review": decision != "ACCEPT",
         "flags": list(record.flags),
         "section_scores": dict(scores),
-        "personal_extra": {"emails": [], "phones": [], "links": []},
-        "provenance": {},
-        "excluded": {"school_level_education": [], "non_paper_publications": []},
+        "personal_extra": extra,
+        "provenance": provenance,
+        "excluded": excluded,
         "parsed_dates": {},
         "stage_report": {name: result.to_report() for name, result in record.results.items()},
     }

@@ -27,9 +27,11 @@ def test_report_counts_for_three_fake_resumes(data_dir, capsys):
     assert s["method_usage"]["stage2"] == {"full_clean": 3}
     assert s["method_usage"]["stage3"] == {"heading_vocabulary": 3}
     assert s["method_usage"]["stage4"] == {"exact_alias_map": 15}  # 5 blocks each
-    assert s["method_usage"]["stage5"] == {"none": 12}  # 4 sections x 3 resumes
+    # personal and education are built; experience and publications are stubs (2 x 3 resumes)
+    assert s["method_usage"]["stage5"] == {"anchor_split": 2, "none": 6, "table_row_split": 1, "top_lines": 3}
     assert s["method_usage"]["stage7"] == {"build_and_validate": 3}
-    assert s["fallbacks_used"]["total"] == 0
+    # the table resume: anchor_split leaves table sections to table_row_split
+    assert s["fallbacks_used"]["total"] == 1 and s["fallbacks_used"]["stage5"] == 1
     assert s["top_reason_codes"] == []
     assert s["flagged_resumes"] == []
 
@@ -53,7 +55,7 @@ def test_report_counts_units_passed_as_not_implemented(data_dir, capsys):
         "stage2": 0,  # built
         "stage3": 0,  # built
         "stage4": 0,  # built
-        "stage5": 12,  # 4 sections x 3 resumes
+        "stage5": 6,  # experience and publications x 3 resumes
         "stage6": 0,
         "stage7": 0,
     }

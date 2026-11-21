@@ -31,8 +31,9 @@ VALID_META = {
     "needs_review": True,
     "flags": [{"section": "education", "code": "UNASSIGNED_TARGET_LINES", "detail": ""}],
     "section_scores": {"personal": 1.0, "education": 0.9, "experience": None, "publications": 0.8},
-    "personal_extra": {"emails": [], "phones": [], "links": []},
-    "provenance": {"education[0]": {"page": 1, "lines": [10, 12], "raw_text": ""}},
+    "personal_extra": {"emails": [], "phones": [], "phone_digits": [], "links": []},
+    "provenance": {"education[0]": {"page": 1, "lines": ["p001_l0010", "p001_l0012"], "raw_text": "",
+                                    "year": "2016-2021", "grade": None, "method": "anchor_split"}},
     "excluded": {"school_level_education": [], "non_paper_publications": []},
     "parsed_dates": {"experience[0]": {"start": "2016-07", "end": None}},
     "stage_report": {

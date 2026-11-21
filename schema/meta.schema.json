@@ -39,10 +39,11 @@
     "personal_extra": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["emails", "phones", "links"],
+      "required": ["emails", "phones", "phone_digits", "links"],
       "properties": {
         "emails": {"type": "array", "items": {"type": "string"}},
         "phones": {"type": "array", "items": {"type": "string"}},
+        "phone_digits": {"type": "array", "items": {"type": "string"}},
         "links": {"type": "array", "items": {"type": "string"}}
       }
     },
@@ -55,7 +56,7 @@
       "additionalProperties": false,
       "required": ["school_level_education", "non_paper_publications"],
       "properties": {
-        "school_level_education": {"type": "array"},
+        "school_level_education": {"type": "array", "items": {"$ref": "#/$defs/provenance"}},
         "non_paper_publications": {"type": "array"}
       }
     },
@@ -146,8 +147,11 @@
       "required": ["page", "lines", "raw_text"],
       "properties": {
         "page": {"type": "integer", "minimum": 1},
-        "lines": {"type": "array", "items": {"type": "integer"}},
-        "raw_text": {"type": "string"}
+        "lines": {"type": "array", "items": {"type": "string"}},
+        "raw_text": {"type": "string"},
+        "year": {"type": ["string", "null"]},
+        "grade": {"type": ["string", "null"]},
+        "method": {"type": "string"}
       }
     }
   }

@@ -245,14 +245,39 @@ Canonical Document (sketch; each section also has `block_id` and `heading_line`)
 
 ### Stage 5: Entity extraction and field normalization
 
-**Personal.** Name (top lines, no digits, 2 to 4 words, honorifics removed; fallback: name from
-the email address), email, phone(s), links (ORCID, Scholar, LinkedIn).
+**Personal** (built). Name methods, in order: `top_lines` (every personal section in order,
+then the top lines of page 1, until a valid name is found; each line is cut at the first email,
+phone, URL, pipe, bullet or contact word, and a "Name:" label, honorifics such as Dr., Prof.,
+Shri, Smt. and trailing degrees are removed, as in the ground truth, where no name keeps an
+honorific; what is left is never a name when it holds an institution word or known
+institution, an organisation word such as department or faculty, a section-heading alias, an
+address word, a degree word, a digit, or only CV words; a name is 2 to 5 words, initials with
+or without dots, in title case or capitals, or in any case when the line is bold or has the
+largest font on page 1 among the lines that pass the other rules; a name split over two short
+one-word lines is joined),
+`from_email` (the email's local part, 2+ alphabetic tokens; always WARN `name_from_email`),
+`from_file_name` (always WARN `name_from_file_name`). Emails, phones (as printed and as digits)
+and links (ORCID, Scholar, LinkedIn, web pages) go only to the sidecar `personal_extra`.
+Check: 0.5 for a valid name (2 to 5 words, letters only) + 0.5 for an email or phone.
 
-**Education.** Split the section into entries using anchors (degree words, year ranges).
-Fields: degree, stream, institution (institution list plus keywords), then `degree_level` by
-field normalization. Year and grade are kept in the sidecar. School-level entries (10th, 12th,
-etc.) are stored under `excluded` in the sidecar, not in the main list. Raw text goes to the
-sidecar as well.
+**Education** (built). All education sections are read in order; a section boundary ends an
+entry. Methods: `anchor_split` (an entry starts at a degree word, a school-level word or a year
+range at the start of a row; in institution-first sections at institution lines; not used
+when most lines are table cells), `table_row_split` (one table row is one entry; a header row of
+column words such as degree, board, year is dropped and tells which column is which),
+`paragraph_split` (vertical gaps), `whole_section_one_entry` (always WARN). Short bold or
+capitalised lines without a degree, year or institution are sub-headings and skipped;
+continuation lines (thesis, advisor, supervisor, CGPA, specialisation, ...) join the previous
+entry's raw text. Fields as printed: degree (longest form in `config/degrees.json`),
+`degree_level` (M.Phil is masters, as in the ground truth; diplomas are other), stream (after
+"in", a dash, a colon or in parentheses; or capitalised subject words right after the degree,
+left empty when more capitalised words follow before the next comma, "from"/"at", year or
+institution word; in a table with no header row, the cell right after the degree cell when it is
+a subject phrase), institution (the segment with a keyword or a name from
+the `config/institutions.json` gazetteer). Year, grade, raw text and provenance (page, line ids,
+method) go to the sidecar; school-level entries to `excluded.school_level_education`. Check:
+min(share of entries with a degree or institution, plausible years 1950 to current year + 6 and
+no header text; coverage of the section's lines), 0 without a higher-education entry.
 
 **Experience.** Split into entries using date ranges as anchors. Fields: job_title, institution (employer),
 dates as printed, then `experience_type`. Parsed start and end go to the sidecar. Raw text goes
@@ -265,7 +290,8 @@ Remove duplicates. Talks, posters, newspaper articles go to `non_paper_publicati
 sidecar. Also read printed totals ("Total: 65") into `stated_totals`.
 
 **Methods for entry splitting, chosen per section:** `anchor_split`, `table_row_split`,
-`paragraph_split`, then `whole_section_one_entry` (always last, always WARN).
+`paragraph_split`, then `whole_section_one_entry` (always last, always WARN). Built for
+education; experience and publications are still stubs.
 **Methods for the name:** `top_lines`, `from_email`, `from_file_name` (lowest confidence, flagged).
 Accept thresholds per section are in `config/thresholds.json`.
 
@@ -284,7 +310,8 @@ stored in the sidecar file.
 **Checks:**
 - Personal: name found; email or phone found.
 - Education: at least one higher-education entry if an education section exists; each entry has
-  a degree or an institution; years plausible (1950 to current year + 6); no table-header text.
+  a degree or an institution; years plausible (1950 to current year + 6, `current_year` set in
+  `thresholds.json` so runs are reproducible); no table-header text; coverage of the lines.
 - Experience: each entry has a date range or a title; end not before start; no entry is a
   fragment (very short text).
 - Publications: entry length sensible; most entries have a year; count vs stated total
@@ -378,7 +405,9 @@ industry, other}; publication `type` in {journal, conference, other}.
   file get the same id.
 - Flag `section` is one of `personal`, `education`, `experience`, `publications`, `other`,
   `document`.
-- Attempt `status` is one of `ACCEPTED`, `BELOW_THRESHOLD`, `NO_OUTPUT`, `NOT_IMPLEMENTED`.
+- Attempt `status` is one of `ACCEPTED`, `BELOW_THRESHOLD`, `NO_OUTPUT`, `NOT_IMPLEMENTED`, `SKIPPED`.
+- Provenance `lines` are line ids (`p001_l0007`); education provenance also has `year`, `grade`
+  and `method`. `personal_extra` also has `phone_digits` (phones as digits, for matching).
 - The main JSON keeps the key order of 5.1. The sidecar, index and run summary use sorted keys.
 - Schema: `schema/meta.schema.json`.
 
@@ -456,6 +485,10 @@ evaluator's matching and field checks.
 | S5 fields | Is every checkable field correct? | Field accuracy |
 | Completeness | Is a matched entry truncated, and where was it cut (S1, S4 or S5)? | Truncation rate |
 
+- Items lost at S5 get one cause: not extracted, merged into another entry, split into
+  fragments, or wrong fields (with the field names for a matched entry). Education false
+  positives are grouped as school-level, header row, bleed from another section, split
+  fragment, other. The stage 5 method per section is counted per group.
 - Items lost at S1 get one cause, the first that fits: garbled (the best page is over the
   garbled limit), glued words (found once spaces are removed), table cell (all words are
   there, all in table-cell lines), wrong order (all words there, not together), missing text,

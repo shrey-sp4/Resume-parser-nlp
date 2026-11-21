@@ -185,10 +185,13 @@ def test_split_inline_headings_rule():
     from resume_parser.sections import split_inline_headings
 
     out = split_inline_headings([_line("Work Experience: 12 years in teaching and research")])
-    assert [(x["id"], x["text"], x.get("inline_heading")) for x in out] == [
-        ("p001_l0001_h", "Work Experience", True), ("p001_l0001", "12 years in teaching and research", None)]
-    assert len(split_inline_headings([_line("Skills - Python, R and statistics")])) == 2  # spaced dash
-    for text in ("Email: someone@example.org", "Experience:", "Self-funded experience in labs",
+    assert [(x["id"], x["text"], x.get("inline_heading"), x.get("no_heading")) for x in out] == [
+        ("p001_l0001_h", "Work Experience", True, None),
+        ("p001_l0001", "12 years in teaching and research", None, True)]
+    assert len(split_inline_headings([_line("Publications - 12 papers in journals")])) == 2  # spaced dash
+    # aliases of other sections never split inline; nor do non-aliases or a bare heading
+    for text in ("Research interests: gene networks", "Summary: a short profile", "Skills - Python, R",
+                 "Email: someone@example.org", "Experience:", "Self-funded experience in labs",
                  "Duration: 2019 - 2021"):
         assert split_inline_headings([_line(text)]) == [_line(text)], text
     cell = _line("Education: Ph.D.", in_table=True)
@@ -205,3 +208,24 @@ def test_inline_heading_cv_is_routed_and_keeps_every_line(tmp_path):
     assert exp["heading_raw"] == "WORK EXPERIENCE" and exp["heading_line"]["inline_heading"]
     assert [x["text"] for x in exp["lines"]] == ["3 years of teaching"] + [t for _, t in EXP_LINES]
     assert "lines_lost_or_duplicated" not in _codes(stage4)
+
+
+def test_other_aliases_inside_an_education_entry_do_not_open_a_section(tmp_path):
+    lines = PERSONAL_TOP + [("heading", "EDUCATION"), EDU_LINES[0], ("body", "Research interests: gene networks"),
+                            ("body", "Summary: thesis on sparse graphs"), EDU_LINES[1]] +         [("heading", "WORK EXPERIENCE")] + EXP_LINES
+    _stage3, stage4 = _run(synth.make_lines_pdf(tmp_path / "fields.pdf", lines))
+    assert [s["name"] for s in stage4.data["sections"]] == ["personal", "education", "experience"]
+    edu = stage4.data["sections"][1]
+    assert [x["text"] for x in edu["lines"]] == [EDU_LINES[0][1], "Research interests: gene networks",
+                                                 "Summary: thesis on sparse graphs", EDU_LINES[1][1]]
+
+
+def test_inline_experience_line_splits_into_heading_and_plain_content(tmp_path):
+    """A styled inline heading: the content part keeps the bold caps style but is not a heading."""
+    lines = PERSONAL_TOP + [("heading", "EDUCATION")] + EDU_LINES + [("heading", "EXPERIENCE: TWELVE YEARS")] + EXP_LINES
+    stage3, stage4 = _run(synth.make_lines_pdf(tmp_path / "styled.pdf", lines))
+    exp = next(s for s in stage4.data["sections"] if s["name"] == "experience")
+    assert exp["heading_line"]["inline_heading"] and exp["heading_raw"] == "EXPERIENCE"
+    content = exp["lines"][0]
+    assert content["text"] == "TWELVE YEARS" and content["no_heading"] and content["bold"] == 1.0
+    assert len(stage3.data["blocks"]) == 3  # personal, education, experience: no extra block

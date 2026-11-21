@@ -6,8 +6,11 @@ heading) is the personal block; every other block starts at a heading line.
 Heading signals (thresholds.json, stage3_sections, to calibrate):
 - vocabulary: the whole line, normalised, is an alias in config/section_aliases.json, or
   has fuzz.ratio of at least stage4_normalize.fuzzy_min with one (a misspelt heading).
-  Table cells may be vocabulary headings (CVs laid out as a two-column table), but only by an
-  exact alias: header cells such as "Degree" are too close to aliases for fuzzy matching.
+  A table cell is a heading only if it is an exact alias of a target section (education,
+  experience, publications) and the heading of its row: the leftmost non-empty cell, with the
+  rest of the row empty (a title row) or holding at least one content cell (a digit, or more
+  than 3 words). A row of short column-header words (Degree, Institution, Year) is a table
+  header, never a section heading. Table cells are never matched fuzzily.
 - look: a short line (at most heading_max_words words and heading_max_chars characters, no
   full stop at the end, not a table cell, not itself a date, degree or citation line) with at
   least look_signals_min of: font at least font_ratio x the body font size, bold share at
@@ -17,9 +20,12 @@ Heading signals (thresholds.json, stage3_sections, to calibrate):
   are never taken from the first name_zone_lines lines of page 1, so the name line stays in
   the personal block.
 
-Inline headings: a line (not a table cell) that starts with an alias followed by a colon or
-a spaced dash, with text after it ("Experience: 25 years ..."), is split first into a heading
-line (id "<id>_h", inline_heading True) and a content line that keeps the original id.
+Inline headings: a line (not a table cell) that starts with an alias of a target section
+(education, experience, publications) followed by a colon or a spaced dash, with text after it
+("Experience: 25 years ..."), is split first into a heading line (id "<id>_h", inline_heading
+True) and a content line that keeps the original id. The content line is marked no_heading:
+it is never a heading candidate, although it keeps the heading's font and bold. Aliases of
+other sections never split inline ("Research interests: ..." inside an entry is a field).
 
 Methods, in order (the first whose score reaches the accept threshold wins):
   heading_vocabulary  split at vocabulary headings only
@@ -50,6 +56,7 @@ from resume_parser.pipeline import escalate, run_with_fallbacks
 from resume_parser.schema import Context, Method, MethodOutput, Reason, StageResult, Status
 
 TARGET_BLOCKS = ("education", "experience", "publications")
+INLINE_TARGETS = TARGET_BLOCKS  # only these open a section inline
 # where each kind of target-looking line belongs
 BELONGS = {"citation": {"publications"}, "degree": {"education"},
            "date": {"education", "experience", "publications"}}
@@ -94,17 +101,40 @@ def is_look_heading(line: dict, prev: dict | None, body: float, p: dict, index_o
     return look_signals(line, prev, body, p) >= p["look_signals_min"]
 
 
+def _is_content_cell(text: str) -> bool:
+    return any(ch.isdigit() for ch in text) or len(text.split()) > 3
+
+
+def is_row_heading(cell: dict, row: list[dict]) -> bool:
+    """True when a table cell heads its row (see the module docstring)."""
+    filled = [c for c in row if c["text"].strip()]
+    if not filled or min(c["cell_col"] for c in filled) != cell["cell_col"]:
+        return False
+    others = [c for c in filled if c is not cell]
+    return not others or any(_is_content_cell(c["text"]) for c in others)
+
+
 def find_headings(lines: list[dict], p: dict, use_look: bool) -> tuple[dict[int, tuple], list[str]]:
     """{line index: (guess, label, source)} and the ids of unknown heading-like lines."""
     body = _body_size(lines)
+    rows: dict[str, list[dict]] = {}
+    for line in lines:
+        if line.get("in_table"):
+            rows.setdefault(line.get("row_id") or "", []).append(line)
     headings: dict[int, tuple] = {}
     unknown: list[str] = []
     page1_index = 0
     for i, line in enumerate(lines):
         prev = lines[i - 1] if i else None
         on_page1 = line["page"] == 1
+        if line.get("no_heading"):  # the content part of an inline heading
+            page1_index += on_page1
+            continue
         short = len(line["text"].split()) <= p["heading_max_words"] and len(line["text"]) <= p["heading_max_chars"]
         alias = exact_alias(line["text"]) if short else None
+        if alias and line.get("in_table") and not (
+                alias[0] in TARGET_BLOCKS and is_row_heading(line, rows.get(line.get("row_id") or "", [line]))):
+            alias = None  # a column header or a field label inside a table, not a section heading
         # fuzzy only outside tables: header cells such as "Degree" are too close to aliases
         fuzzy = None if alias or not short or line.get("in_table") or line_kind(line["text"])             else fuzzy_alias(line["text"], p["fuzzy_min"])
         if alias:
@@ -130,9 +160,10 @@ def split_inline_headings(lines: list[dict]) -> list[dict]:
     out = []
     for line in lines:
         m = None if line.get("in_table") else _INLINE.match(line["text"])
-        if m and exact_alias(m.group("head")):
+        alias = exact_alias(m.group("head")) if m else None
+        if alias and alias[0] in INLINE_TARGETS:
             out.append(dict(line, id=f"{line['id']}_h", text=m.group("head").strip(), inline_heading=True))
-            out.append(dict(line, text=m.group("rest").strip()))
+            out.append(dict(line, text=m.group("rest").strip(), no_heading=True))
         else:
             out.append(line)
     return out

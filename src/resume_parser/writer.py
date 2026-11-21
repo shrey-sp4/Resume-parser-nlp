@@ -206,6 +206,30 @@ def write_index(out_dir: Path) -> dict:
     return index
 
 
+# ---------------------------------------------------------------- unknown headings
+
+UNKNOWN_HEADINGS_FILE = "stage3_unknown_headings.txt"
+
+
+def unknown_headings(record: PipelineRecord) -> list[str]:
+    """Texts of the heading-like lines stage 3 did not find in the alias map."""
+    stage3, stage2 = record.results.get("stage3"), record.results.get("stage2")
+    if stage3 is None or not stage3.data or stage2 is None or not stage2.data:
+        return []
+    by_id = {line["id"]: line["text"] for line in stage2.data["lines"]}
+    return [by_id[i] for i in stage3.data["unknown_headings"] if i in by_id]
+
+
+def write_unknown_headings(rows: list[tuple[str, str]], reports_dir: Path) -> Path:
+    """A review list of (resume_id, heading text), sorted, for adding aliases by hand. It holds
+    resume text, so it is written only inside the data folder and never printed."""
+    folder = require_inside_data_root(reports_dir)
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / UNKNOWN_HEADINGS_FILE
+    _write(path, "".join(f"{rid}\t{text}\n" for rid, text in sorted(rows)))
+    return path
+
+
 # ---------------------------------------------------------------- saved stage files
 
 # stage -> file name under RESUME_DATA_DIR/reports/stages/<resume_id>/

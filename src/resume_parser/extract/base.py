@@ -9,8 +9,8 @@ Image-only pages (from the stage 0 profile) only try OCR and must give output, o
 page is FAIL "no_text_layer". The stage FAILs only when no page is usable.
 
 Page score (0..1), from label-free checks (thresholds.json, stage1_checks, to calibrate):
-- 0 when more than garbled_max of the characters are garbled ((cid:N), replacement or
-  private-use characters). An empty page gives no output at all.
+- 0 when more than garbled_max of the characters are garbled ((cid:N) or replacement
+  characters; private-use icon glyphs do not count). An empty page gives no output at all.
 - otherwise the word overlap with the other text method (order-insensitive; method 1 and 3
   are compared with method 2, method 2 with method 1), or 1.0 when the other method has
   nothing to compare with;

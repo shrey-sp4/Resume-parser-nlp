@@ -53,7 +53,7 @@ def test_not_implemented_is_not_a_flag(synthetic_pdfs):
     assert record.stopped_at is None
     assert record.flags == []
     assert record.sidecar["decision"] == "ACCEPT"
-    assert record.results["stage3"].reasons[0].code == "not_implemented"
+    assert record.results["stage5"].reasons[0].code == "not_implemented"
 
 
 def test_invalid_main_json_writes_sidecar_only(synthetic_pdfs, data_dir):

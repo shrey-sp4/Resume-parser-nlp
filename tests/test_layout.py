@@ -112,5 +112,5 @@ def test_word_overlap_ignores_order_and_case():
 
 def test_garbled_rate_counts_cid_and_replacement_chars():
     assert garbled_rate("(cid:12)abcd") == pytest.approx(1 / 5)
-    assert garbled_rate("ab�") == 0.5
+    assert garbled_rate("ab�") == 0.25  # the private-use icon does not count
     assert garbled_rate("plain text") == 0.0

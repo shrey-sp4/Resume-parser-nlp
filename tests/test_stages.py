@@ -37,7 +37,7 @@ def test_method_chains_are_registered_in_order():
     assert [m.name for m in clean.METHODS] == ["full_clean", "conservative_clean", "raw_lines"]
     assert [m.name for m in sections.METHODS] == ["heading_vocabulary", "heading_look", "content_patterns"]
     assert [m.name for m in normalize.METHODS] == [
-        "exact_alias_map", "fuzzy_alias_match", "keep_as_other_with_warning"
+        "exact_alias_map", "fuzzy_alias_match", "content_guess", "keep_as_other_with_warning"
     ]
     assert [m.name for m in SPLIT_METHODS] == [
         "anchor_split", "table_row_split", "paragraph_split", "whole_section_one_entry"

@@ -94,8 +94,8 @@ def test_resume_without_stage_files_is_reported(data_dir, capsys):
 
 
 def test_runs_on_stage_files_saved_by_the_pipeline(data_dir, capsys):
-    """Real stage 1 files from the pipeline: every GT item of the fake resumes is found in
-    the stage 1 lines (stage 4 is still a stub, so items stop at S4)."""
+    """Real stage 1-4 files from the pipeline: every GT item of the fake resumes is found in
+    the stage 1 lines and in the right section (stage 5 is still a stub, so items stop at S5)."""
     synth.build_all(data_dir / "pdfs")
     assert cli_main(["run", "--allow-stubs", "--save-stages"]) == 0
     write_ground_truth(data_dir)
@@ -104,7 +104,7 @@ def test_runs_on_stage_files_saved_by_the_pipeline(data_dir, capsys):
     for group in ("dev", "tuned"):
         items = _items(data_dir, group).values()
         assert items and all(r["s1_ge95"] for r in items), [r["lost_at"] for r in items]
-        assert all(r["lost_at"] == "S4 section" for r in items)
+        assert all(r["lost_at"] == "S5 entry" for r in items), [(r["section"], r["lost_at"]) for r in items]
 
 
 # ---------------------------------------------------------------- test_frozen guard
@@ -220,3 +220,47 @@ def test_s1_causes(data_dir, capsys):
     items = _items(data_dir)
     assert items[("publications", 0)]["cause"] == "wrong order"
     assert items[("publications", 1)]["cause"] == "glued words"
+
+
+# ---------------------------------------------------------------- S4 rows and check validity
+
+S4_ROW = re.compile(
+    r"^r_[0-9a-f]{8}\s+(name|education|experience|publications)\s+\d+\s+"
+    r"(wrong section: (personal|education|experience|publications|other|unassigned)|in text but in no section)\s+"
+    r"stage3_\S+_/_stage4_\S+$"
+)
+
+
+def test_lost_items_for_s4_print_ids_causes_and_methods_only(data_dir, capsys):
+    _setup(data_dir)
+    assert funnel.main(["--lost-items", "--stage", "S4"]) == 0
+    out = capsys.readouterr().out
+    header, *rows = out.strip().splitlines()
+    assert header.split() == ["resume_id", "section", "index", "cause", "method"]
+    assert rows and all(S4_ROW.match(r) for r in rows), rows
+    assert any(" education " in r and "wrong section: other" in r for r in rows)
+    for s in _gt_strings():
+        assert s not in out
+
+
+def test_check_validity_counts():
+    fired_loss = ({("stage1", "below_accept_threshold"), ("stage4", "missing_target_section:education")},
+                  {("S1 text", "publications"), ("S4 section", "education")})
+    fired_no_loss = ({("stage1", "below_accept_threshold")}, set())
+    missed = (set(), {("S1 text", "name")})
+    rows = funnel.check_validity([fired_loss, fired_no_loss, missed])
+    assert rows[("stage1", "below_accept_threshold")] == {"fired": 2, "fired_with_loss": 1, "missed": 1}
+    assert rows[("stage4", "missing_target_section:education")] == {"fired": 1, "fired_with_loss": 1, "missed": 0}
+    assert rows[("stage1", "status WARN")] == {"fired": 0, "fired_with_loss": 0, "missed": 2}
+
+
+def test_check_validity_table_is_printed_from_sidecars(data_dir, capsys):
+    synth.build_all(data_dir / "pdfs")
+    assert cli_main(["run", "--allow-stubs", "--save-stages"]) == 0
+    write_ground_truth(data_dir)
+    capsys.readouterr()
+    assert funnel.main([]) == 0
+    out = capsys.readouterr().out
+    table = out.split("=== CHECK VALIDITY")[1]
+    assert "stage5" in table and "not_implemented" in table  # stage 5 is a stub, so items are lost there
+    assert "test_frozen" not in table

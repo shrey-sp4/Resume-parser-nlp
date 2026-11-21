@@ -80,5 +80,23 @@
     "header_footer_zone": 0.12,
     "join_max_gap_ratio": 0.6,
     "join_left_edge_pt": 2.0
+  },
+  "stage3_sections": {
+    "_comment": "Stage 3 heading and block settings. To calibrate on dev. font_ratio is relative to the body font size; space_above_ratio to the line height.",
+    "heading_max_words": 8,
+    "heading_max_chars": 60,
+    "font_ratio": 1.15,
+    "bold_min": 0.6,
+    "caps_min": 0.8,
+    "space_above_ratio": 1.0,
+    "look_signals_min": 2,
+    "name_zone_lines": 3,
+    "personal_free_lines": 5,
+    "content_min_share": 0.3
+  },
+  "stage4_normalize": {
+    "_comment": "Stage 4 heading mapping and document checks. To calibrate on dev. fuzzy_min is fuzz.ratio (0-100) on the whole normalised heading; leak_max is the share of target-looking lines allowed in other or unassigned.",
+    "fuzzy_min": 90,
+    "leak_max": 0.1
   }
 }

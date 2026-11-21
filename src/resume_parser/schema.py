@@ -26,7 +26,13 @@ CANONICAL_SECTIONS = TARGET_SECTIONS + ("other",)
 FLAG_SECTIONS = CANONICAL_SECTIONS + ("document",)
 
 # Reason codes that are kept in the stage report but are never raised as flags.
-INFO_CODES = frozenset({"not_implemented"})
+INFO_CODES = frozenset({"not_implemented", "missing_target_section"})
+
+
+def is_info(code: str) -> bool:
+    """Information-level codes are kept in the stage report but never become flags. A code
+    may carry a qualifier after a colon (missing_target_section:education)."""
+    return code.split(":", 1)[0] in INFO_CODES
 
 
 class Status(str, Enum):

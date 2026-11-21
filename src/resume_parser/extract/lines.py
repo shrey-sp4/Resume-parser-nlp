@@ -182,17 +182,13 @@ def text_of(lines: list[dict] | None) -> str:
     return "\n".join(line["text"] for line in lines or [])
 
 
-def _private_use(ch: str) -> bool:
-    o = ord(ch)
-    return 0xE000 <= o <= 0xF8FF or o >= 0xF0000
-
-
 def garbled_rate(text: str) -> float:
-    """Share of characters that are (cid:N) codes, replacement or private-use characters.
-    Each (cid:N) counts as one character."""
+    """Share of characters that are (cid:N) codes or replacement characters (U+FFFD).
+    Each (cid:N) counts as one character. Private-use characters are not counted: they are
+    icon-font glyphs (phone, email, link symbols), which stage 2 strips as icons."""
     cids = len(_CID.findall(text))
     rest = _CID.sub("", text)
-    bad = cids + sum(1 for ch in rest if ch == "�" or _private_use(ch))
+    bad = cids + rest.count("�")
     total = cids + sum(1 for ch in rest if not ch.isspace())
     return round(bad / total, 4) if total else 0.0
 

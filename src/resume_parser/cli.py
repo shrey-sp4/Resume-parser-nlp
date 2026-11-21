@@ -47,7 +47,13 @@ def _select_by_group(pdfs: list[Path], groups_arg: str | None) -> tuple[list[tup
 def cmd_run(args: argparse.Namespace) -> int:
     from resume_parser.pipeline import run_pipeline, unimplemented_methods
     from resume_parser.report import write_run_summary
-    from resume_parser.writer import write_index, write_resume, write_stage_files
+    from resume_parser.writer import (
+        unknown_headings,
+        write_index,
+        write_resume,
+        write_stage_files,
+        write_unknown_headings,
+    )
 
     # Stub methods pass their pages and sections as OK "not_implemented", so a run
     # with stubs left gives outputs that look fine but hold nothing. Refuse by default.
@@ -88,6 +94,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     pdfs = [p for p, _ in selected]
     group_of = {p: g for p, g in selected}
     frozen_done = 0
+    review: list[tuple[str, str]] = []
 
     errors = 0
     for pdf in pdfs:
@@ -105,11 +112,17 @@ def cmd_run(args: argparse.Namespace) -> int:
         if quiet:
             frozen_done += 1
             continue
+        unknown = unknown_headings(record)
+        review += [(rid, text) for text in unknown]
         stopped = f" stopped_at=stage{record.stopped_at}" if record.stopped_at is not None else ""
-        print(f"{rid} {record.sidecar['decision']} flags={len(record.flags)}{stopped}")
+        print(f"{rid} {record.sidecar['decision']} flags={len(record.flags)} unknown_headings={len(unknown)}{stopped}")
     if frozen_done:
         print(f"test_frozen: {frozen_done} processed (not shown per resume)")
 
+    if args.save_stages:
+        write_unknown_headings(review, root / "reports")
+        print(f"unknown heading-like lines: {len(review)} (for review in RESUME_DATA_DIR/reports/"
+              "stage3_unknown_headings.txt; test_frozen is never listed)")
     index = write_index(out_dir)
     summary = write_run_summary(out_dir, root / "reports")
     print(

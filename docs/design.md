@@ -58,8 +58,10 @@ methods" below).
   `review_queue/` yet; the index shows the decision.)
 - WARN or FAIL in stages 2 to 7: carry on, but mark the resume and the affected section.
   The JSON is still written, with `needs_review: true` and the reasons, so no information is lost.
-- Reason codes that only say a method is not built yet (`not_implemented`) are kept in the
-  stage report but are not flags.
+- Information-level reason codes are kept in the stage report but are not flags:
+  `not_implemented` (a method is not built yet) and `missing_target_section:<name>` (stage 4
+  found no personal, education, experience or publications section). A code may carry a
+  qualifier after a colon.
 
 **Choosing between methods.** Every stage has a fixed, ordered chain of named methods.
 A shared helper in the runner (`run_with_fallbacks`) does the choosing:
@@ -124,8 +126,9 @@ always picks the same method.
 - Pages that stage 0 marked `IMAGE_ONLY` only try OCR. If that gives nothing, the page is
   FAIL `no_text_layer`.
 - Page score (0..1), label-free, settings in `thresholds.json` (`stage1_checks`, to calibrate):
-  - 0 when more than 1% of the characters are garbled (`(cid:N)`, replacement and private-use
-    characters); a page with no lines gives no output (`empty_page`);
+  - 0 when more than 1% of the characters are garbled (`(cid:N)` and replacement characters;
+    private-use icon glyphs from icon fonts do not count, stage 2 strips them); a page with no
+    lines gives no output (`empty_page`);
   - otherwise the word overlap with the other text method: shared words, as a multiset of
     lowercase words (order does not matter), over the larger word count (method 1 and 3 are
     compared with method 2, method 2 with method 1);
@@ -156,18 +159,32 @@ always picks the same method.
 - Settings in `thresholds.json` (`stage2_clean`, to calibrate).
 
 ### Stage 3: Section detection
-- Job: find where each section starts and ends, and give each block a raw label (the heading as
-  printed, plus a best-guess target name). Mapping to the ideal section names is finished in
-  stage 4.
-- Signals: heading words from `config/section_aliases.json`; heading look (larger relative font,
-  bold, all caps, short line, white space above); the content that follows (dates, degree
-  words, citation patterns).
-- Methods: `heading_vocabulary`, `heading_look`, `content_patterns` (for lines with no
-  heading). A small classifier can be added later if data allows.
-- Checks: personal block found near the top; at least one of education, experience, publications
-  found; unassigned lines that look like dates, degrees or citations are within a small limit;
-  short bold or capitalised lines that look like headings but are unknown are listed.
-- Gate: WARN if a target section is missing or leaking lines.
+- Job: split the cleaned lines into blocks, each starting at a heading line, and give each a
+  best-guess target name. The block before the first heading is the personal block. Mapping to
+  the ideal section names is finished in stage 4.
+- Heading signals (settings in `thresholds.json`, `stage3_sections`, to calibrate):
+  - vocabulary: the whole normalised line is an alias in `config/section_aliases.json`, or has
+    `fuzz.ratio` at least 90 with one (misspelt headings). Table cells may be headings by an
+    exact alias only (header cells such as "Degree" are too close to aliases).
+  - look: a short line (at most 8 words, 60 characters, no full stop, not a table cell, not a
+    date, degree or citation line) with at least 2 of: font at least 1.15 x body size, bold,
+    all capitals, white space above; one of them must be the larger font or the capitals, so a
+    bold job title at body size is not a heading. Never in the first 3 lines of page 1 (the
+    name).
+  - content: citation patterns (publications), degree words (education), date ranges
+    (experience).
+- Methods: `heading_vocabulary` (vocabulary headings only); `heading_look` (plus look headings);
+  `content_patterns` (as `heading_look`, and blocks with an unknown heading get a guess from
+  their content).
+- Score: 0 when no education, experience or publications block is found; otherwise 1 - the
+  share of target-looking lines where they do not belong (a citation outside publications, a
+  degree line outside education, a date range outside education, experience and publications;
+  the first 5 lines of the personal block are not counted). `heading_vocabulary` scores half
+  while unknown heading-like lines remain.
+- Unknown heading-like lines are counted per resume; with `--save-stages` their text goes to
+  `reports/stage3_unknown_headings.txt` in the data folder (never printed, never test_frozen)
+  for adding aliases by hand.
+- Gate: WARN `no_target_section` if no target section is found.
 
 ### Stage 4: Normalization layer (the standard form)
 
@@ -175,26 +192,34 @@ always picks the same method.
   **Canonical Document**. This is the only thing stage 5 reads.
 - **Canonical section names** (the ideal names): `personal`, `education`, `experience`,
   `publications`, `other`. Every heading variant is mapped to one of these using
-  `config/section_aliases.json` (many aliases -> one canonical name).
+  `config/section_aliases.json` (many aliases -> one canonical name; `other` is split into
+  labels such as `skills`, `awards`, `presentations` that become `original_name`). The map
+  merges the old repo's heading map with a starter list; job titles and school-level labels
+  (12th, HSC) are entry content, never headings.
   Sections that are not one of the four are kept under `other` with their original label
   (for example `skills`, `awards`) so nothing is lost.
 - **Mapping rule for experience** (decide it once, in the config, with comments): only headings
   that list positions held (Work Experience, Employment, Academic Positions, Postdoctoral
   Positions) map to `experience`. Headings that list courses taught, responsibilities or
-  projects map to `other`. This matches the ground-truth labelling guide ("jobs only").
+  projects map to `other` (including "Project Experience"). This matches the ground-truth
+  labelling guide ("jobs only"). Likewise papers presented, presentations, talks and posters map
+  to `other`; book chapters stay in `publications`.
 - **Standard form of the lines:** one line per logical line, bullets and icons removed, wrapped
   lines joined, spaces and unicode normalised, original text otherwise untouched (dates stay as
   printed). Each line keeps its id, page and position, so provenance survives.
-- Methods: `exact_alias_map`; `fuzzy_alias_match` (rapidfuzz against the alias map);
+- Methods, chosen per block: `exact_alias_map`; `fuzzy_alias_match` (`fuzz.ratio` of the
+  whole normalised heading against every alias, at least `stage4_normalize.fuzzy_min` = 90);
+  `content_guess` (the block's dominant content, always WARN `section_from_content`);
   `keep_as_other_with_warning` (the section is `other` with the original label and a WARN).
-  Heading look and the content that follows come from stage 3.
 - Checks: every cleaned line is in exactly one section (or `unassigned`); line order is kept;
   joining the canonical lines gives back the cleaned text (no loss, no duplication);
   all section names are from the allowed list; no target-looking lines (dates, degrees,
   citations) sit in `other` or `unassigned` beyond a small limit.
-- Gate: WARN if a target section is empty or missing, or lines leak into `other`.
+- Gate: WARN `target_lines_in_other` when more than 10% of target-looking lines sit in
+  `other` or `unassigned`; WARN `lines_lost_or_duplicated` if the line check fails. A missing
+  target section gets the information-level `missing_target_section:<name>`.
 
-Canonical Document (sketch):
+Canonical Document (sketch; each section also has `block_id` and `heading_line`):
 ```json
 {
   "doc_id": "r_0001",
@@ -428,9 +453,16 @@ evaluator's matching and field checks.
   other. Each also lists the stage 1 methods whose own lines contain it (`recoverable_by`,
   from `stage1_methods.json`). `funnel.py --lost-items` lists them for dev and tuned, showing
   only resume ID, section, index, cause and `recoverable_by`.
+- `funnel.py --lost-items --stage S4` (or `S5`) lists those losses the same way, with the
+  method that handled the item instead of `recoverable_by`.
+- **Check validity** (dev and tuned only): for each label-free check that fired (every stage
+  reason code, and each stage's WARN/FAIL), how many resumes it fired on, how many of those
+  had a real loss at the step the stage feeds (stages 0-1: S1; 2-4: S4; 5: S5;
+  `missing_target_section:<name>`: that section's S4 losses), and how many resumes with such a
+  loss it missed. This shows which checks to trust before calibrating them.
 - Each lost item is also given the method that handled it:
   - the stage 1 method of the page that matches it best
-  - the stage 3 and stage 4 methods
+  - the stage 3 method and the stage 4 method of the block that holds it
   - or the stage 5 method of its section
 - False positives get the first matching cause, from a fixed list: school-level entry, table
   header or skills line, non-paper publication, duplicate, wrapped-line fragment, bleed from
@@ -488,7 +520,7 @@ resume-parser/
   config/   section_aliases.json  degrees.json  titles.json  institutions.json  thresholds.json
   schema/   resume.schema.json  meta.schema.json  run_index.schema.json
   src/resume_parser/
-     intake.py  pipeline.py  cli.py  schema.py  groups.py   (groups.py: dev / tuned / test_frozen split)
+     intake.py  pipeline.py  cli.py  schema.py  groups.py  headings.py   (groups: data split; headings: aliases, content patterns)
      report.py                                   (run summary, section 5.4)
      extract/  base.py  lines.py  source.py  pdfplumber_extractor.py  pdfminer_extractor.py  ocr_extractor.py
      clean.py  sections.py  normalize.py        (normalize.py builds the Canonical Document)

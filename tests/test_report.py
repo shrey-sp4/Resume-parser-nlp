@@ -25,7 +25,8 @@ def test_report_counts_for_three_fake_resumes(data_dir, capsys):
     assert s["method_usage"]["stage0"] == {"open_pdfplumber": 3}
     assert s["method_usage"]["stage1"] == {"pdfplumber_words_tables": 3}  # one page each
     assert s["method_usage"]["stage2"] == {"full_clean": 3}
-    assert s["method_usage"]["stage3"] == {"none": 3}
+    assert s["method_usage"]["stage3"] == {"heading_vocabulary": 3}
+    assert s["method_usage"]["stage4"] == {"exact_alias_map": 15}  # 5 blocks each
     assert s["method_usage"]["stage5"] == {"none": 12}  # 4 sections x 3 resumes
     assert s["method_usage"]["stage7"] == {"build_and_validate": 3}
     assert s["fallbacks_used"]["total"] == 0
@@ -50,8 +51,8 @@ def test_report_counts_units_passed_as_not_implemented(data_dir, capsys):
         "stage0": 0,
         "stage1": 0,  # built: every page is read
         "stage2": 0,  # built
-        "stage3": 3,
-        "stage4": 3,
+        "stage3": 0,  # built
+        "stage4": 0,  # built
         "stage5": 12,  # 4 sections x 3 resumes
         "stage6": 0,
         "stage7": 0,

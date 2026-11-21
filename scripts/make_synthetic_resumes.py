@@ -341,6 +341,44 @@ def make_layout_pdf(path: Path) -> Path:
     return path
 
 
+# ---------------------------------------------------------------- section helpers
+
+PERSONAL_TOP = [("name", "Mira Testwood"), ("contact", "mira.testwood@example.org | +00 0000 000 001")]
+EDU_LINES = [("body", "Ph.D. in Computational Biology, Northfield Institute of Science, 2016 - 2021"),
+             ("body", "M.Sc. in Applied Mathematics, Lakeside University, 2014 - 2016")]
+EXP_LINES = [("body", "Assistant Professor, Hillcrest University, Jul 2023 - Present"),
+             ("body", "Postdoctoral Fellow, Northfield Institute of Science, Aug 2021 - Jun 2023")]
+PUB_LINES = [("body", "M. Testwood, R. Doe. Modelling gene networks. Journal of Invented Biology, vol. 4, 2022."),
+             ("body", "M. Testwood. Fast alignment of sequences. Proc. Imaginary Conference on Bioinformatics, 2020.")]
+
+
+def make_lines_pdf(path: Path, lines: list[tuple[str, str]]) -> Path:
+    """One page from (style, text) lines; styles: name, contact, heading, body."""
+    c = _new_canvas(path, "synthetic sections page")
+    _draw_lines(c, lines, HEIGHT - MARGIN)
+    c.showPage()
+    c.save()
+    return path
+
+
+def make_table_headings_pdf(path: Path) -> Path:
+    """A CV laid out as a two-column table: heading cells on the left, content on the right."""
+    styles = getSampleStyleSheet()
+    rows = [
+        ["Education", EDU_LINES[0][1]],
+        ["", EDU_LINES[1][1]],
+        ["Experience", EXP_LINES[0][1]],
+        ["", EXP_LINES[1][1]],
+    ]
+    table = Table(rows, hAlign="LEFT", colWidths=[90, 400])
+    table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+                               ("FONTSIZE", (0, 0), (-1, -1), 8)]))
+    story = [Paragraph(text, styles["Title" if style == "name" else "Normal"]) for style, text in PERSONAL_TOP]
+    story += [Spacer(1, 8), table]
+    SimpleDocTemplate(str(path), pagesize=A4, title="synthetic table headings", author="synthetic").build(story)
+    return path
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) != 1:

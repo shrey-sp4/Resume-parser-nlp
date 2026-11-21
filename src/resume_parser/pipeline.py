@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from resume_parser.schema import (
-    INFO_CODES,
     Attempt,
     AttemptStatus,
     Context,
@@ -29,6 +28,7 @@ from resume_parser.schema import (
     UnitChoice,
     load_thresholds,
     resume_id_for,
+    is_info,
     worst,
 )
 
@@ -155,7 +155,7 @@ def _choose(
 
     if status is not Status.OK:
         for a in attempts:
-            reasons.extend(r for r in a.reasons if r.code not in INFO_CODES)
+            reasons.extend(r for r in a.reasons if not is_info(r.code))
     return _Choice(None, tuple(attempts), None, status, _dedupe(reasons), all_outputs)
 
 
@@ -327,7 +327,7 @@ def flags_from(result: StageResult) -> list[dict]:
         return []
     flags = []
     for r in result.reasons:
-        if r.code in INFO_CODES:
+        if is_info(r.code):
             continue
         detail = f"{result.stage}: {r.detail}" if r.detail else result.stage
         flags.append({"section": r.section or "document", "code": r.code, "detail": detail})

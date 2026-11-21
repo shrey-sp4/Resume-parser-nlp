@@ -188,3 +188,25 @@ def test_bad_group_names_and_missing_split_are_refused(data_dir, capsys):
     assert main(["run", "--allow-stubs", "--groups", "dev,everything"]) == 2
     assert "--groups takes" in capsys.readouterr().err
     assert _processed(data_dir) == set()
+
+
+def test_unknown_headings_go_to_a_private_review_file(data_dir, capsys):
+    import make_synthetic_resumes as synth
+    from make_synthetic_resumes import EDU_LINES, PERSONAL_TOP
+
+    lines = PERSONAL_TOP + [("heading", "EDUCATION")] + EDU_LINES + [("heading", "SECRET HEADING WORDS")] + \
+        [("body", "Plain words here")]
+    synth.make_lines_pdf(data_dir / "pdfs" / "odd.pdf", lines)
+    assert main(["run", "--allow-stubs", "--save-stages"]) == 0
+    out = capsys.readouterr().out
+    assert f"{resume_id_for('odd.pdf')} " in out and "unknown_headings=1" in out
+    assert "SECRET" not in out
+    review = (data_dir / "reports" / "stage3_unknown_headings.txt").read_text(encoding="utf-8")
+    assert review == f"{resume_id_for('odd.pdf')}\tSECRET HEADING WORDS\n"
+
+
+def test_review_file_never_lists_test_frozen(data_dir, capsys):
+    _labelled(data_dir)
+    assert main(["run", "--allow-stubs", "--save-stages", "--groups", "test_frozen"]) == 0
+    review = (data_dir / "reports" / "stage3_unknown_headings.txt").read_text(encoding="utf-8")
+    assert resume_id_for("synthetic_c_variants") not in review

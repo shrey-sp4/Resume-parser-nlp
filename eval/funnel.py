@@ -4,6 +4,8 @@
     python eval/funnel.py --test-frozen  ALSO test_frozen, aggregates only; ONCE ever
     python eval/funnel.py --lost-items   list the items lost at S1 (dev + tuned only):
                                          resume ID, section, index, cause, recoverable_by
+    python eval/funnel.py --lost-items --stage S4
+                                         the same for S4 (or S5), with the method instead
 
 Read-only: never runs or changes the parser, never edits ground truth. Needs the stage files
 from "python -m resume_parser.cli run --save-stages" (RESUME_DATA_DIR/reports/stages/<resume_id>/)
@@ -42,6 +44,13 @@ False positives (unmatched predictions) get the FIRST matching cause, in this or
 school-level entry; table header or skills line; non-paper publication; duplicate of an
 already-matched GT item; wrapped-line fragment; bleed from another section; other. The rules
 are defined once below (from category definitions, not fitted per resume) and are heuristics.
+
+Check validity (dev + tuned only): for every label-free check that fired (each stage's
+reason codes, and each stage's WARN/FAIL status) the table counts, per group, the resumes it
+fired on, how many of those had a real loss at the funnel step that stage feeds (stages 0-1:
+S1; stages 2-4: S4; stage 5: S5; for missing_target_section:<name> only that section's S4
+losses), and how many resumes with such a loss it did not fire on. This shows whether a check
+is worth trusting before its threshold is calibrated.
 
 Privacy: console output shows counts only; --lost-items shows resume IDs, never text. Per-item and false-positive files are keyed by the
 salted eval ID and hold no resume text. test_frozen: aggregates only, nothing per item.
@@ -144,9 +153,11 @@ def load_stages(stem: str) -> dict:
         for method, data in sorted((methods_rec["methods"][page_id] or {}).items()):
             by_method[method].append(_line_text((data or {}).get("lines")))
     sections: dict[str, list[str]] = defaultdict(list)
+    blocks: list[tuple[str, str]] = []
     data4 = (rec["stage4"] or {}).get("data") or {}
     for sec in data4.get("sections") or []:
         sections[str(sec.get("name") or "unassigned")].append(_line_text(sec.get("lines")))
+        blocks.append((str(sec.get("block_id") or ""), snorm(_line_text(sec.get("lines")))))
     if data4.get("unassigned"):
         sections["unassigned"].append(_line_text(data4["unassigned"]))
     return {
@@ -158,6 +169,7 @@ def load_stages(stem: str) -> dict:
         "table_words": table_words,
         "methods_n": {m: snorm("\n".join(v)) for m, v in sorted(by_method.items())},
         "secs_n": {k: snorm("\n".join(v)) for k, v in sorted(sections.items())},
+        "blocks_n": blocks,
     }
 
 
@@ -178,7 +190,12 @@ def method_for(sec: str, lost_at: str, fields_n: list, st: dict) -> str | None:
         page = max(scores, key=lambda p: (scores[p], -list(scores).index(p)))
         return f"stage1 {_method(rec['stage1'], page)}"
     if lost_at == "S4 section":
-        return f"stage3 {_method(rec['stage3'])} / stage4 {_method(rec['stage4'])}"
+        # the block that holds the item best (stage 4 chooses its method per block)
+        scores = [(find_all(fields_n, text) or 0.0, -i, block) for i, (block, text) in enumerate(st["blocks_n"])]
+        block = max(scores)[2] if scores else None
+        stage4 = _method(rec["stage4"], block) if block and (rec["stage4"] or {}).get("per_unit") else \
+            _method(rec["stage4"])
+        return f"stage3 {_method(rec['stage3'])} / stage4 {stage4}"
     if lost_at in ("S5 entry", "S5 fields"):
         return f"stage5 {_method(rec['stage5'], STAGE5_UNIT[sec])}"
     return None
@@ -387,6 +404,74 @@ def diagnose_resume(gt: dict, pred: dict | None, st: dict, eid: str):
     return items, fps
 
 
+# ---- check validity ------------------------------------------------------------------------
+LOSS_FOR_STAGE = {
+    "stage0": ("S1 text",), "stage1": ("S1 text",),
+    "stage2": ("S4 section",), "stage3": ("S4 section",), "stage4": ("S4 section",),
+    "stage5": ("S5 entry", "S5 fields"),
+    "stage6": ("S1 text", "S4 section", "S5 entry", "S5 fields"),
+    "stage7": ("S1 text", "S4 section", "S5 entry", "S5 fields"),
+}
+GT_SECTION_OF_TARGET = {"personal": "name", "education": "education", "experience": "experience",
+                        "publications": "publications"}
+
+
+def load_checks(stem: str) -> set[tuple[str, str]] | None:
+    """(stage, check) pairs that fired for one resume, from its sidecar: every reason code,
+    and "status WARN" / "status FAIL" for a stage that did not end OK. None without a sidecar."""
+    path = common.outputs_dir() / f"{stem}.meta.json"
+    if not path.is_file():
+        return None
+    fired = set()
+    for stage, report in read_json(path)["stage_report"].items():
+        if report["status"] != "OK":
+            fired.add((stage, f"status {report['status']}"))
+        for reason in report["reasons"]:
+            fired.add((stage, reason["code"]))
+    return fired
+
+
+def _relevant_loss(stage: str, check: str, losses: set[tuple[str, str]]) -> bool:
+    steps = LOSS_FOR_STAGE.get(stage, ())
+    if check.startswith("missing_target_section:"):
+        section = GT_SECTION_OF_TARGET.get(check.split(":", 1)[1])
+        return any(step == "S4 section" and sec == section for step, sec in losses)
+    return any(step in steps for step, _sec in losses)
+
+
+def check_validity(per_resume: list[tuple[set, set]]) -> dict[tuple[str, str], dict]:
+    """(stage, check) -> {"fired", "fired_with_loss", "missed"} over (fired, losses) pairs."""
+    keys = {k for fired, _ in per_resume for k in fired}
+    keys |= {(s, f"status {x}") for s in LOSS_FOR_STAGE for x in ("WARN", "FAIL")}
+    rows = {}
+    for stage, check in sorted(keys):
+        fired = with_loss = missed = 0
+        for f, losses in per_resume:
+            hit = (stage, check) in f
+            loss = _relevant_loss(stage, check, losses)
+            fired += hit
+            with_loss += hit and loss
+            missed += loss and not hit
+        rows[(stage, check)] = {"fired": fired, "fired_with_loss": with_loss, "missed": missed}
+    return rows
+
+
+def print_check_validity(results: dict) -> None:
+    groups = [g for g in ("dev", "tuned") if g in results]
+    tables = {g: check_validity(results[g]["checks"]) for g in groups}
+    keys = sorted({k for t in tables.values() for k in t})
+    print(f"  {'stage':<8}{'check':<40}" + "".join(f"{g + ' fired/+loss/missed':>28}" for g in groups))
+    for key in keys:
+        cells = []
+        for g in groups:
+            row = tables[g].get(key, {"fired": 0, "fired_with_loss": 0, "missed": 0})
+            cells.append(f"{row['fired']:>8} {row['fired_with_loss']:>8} {row['missed']:>8}")
+        if any(tables[g].get(key, {}).get("fired") or tables[g].get(key, {}).get("missed") for g in groups):
+            print(f"  {key[0]:<8}{key[1][:39]:<40}" + "".join(f"{c:>28}" for c in cells))
+    print("  (fired = resumes the check fired on; +loss = of those, resumes with a real loss at the step\n"
+          "   that stage feeds; missed = resumes with such a loss where the check did not fire)")
+
+
 # ---- aggregation / printing ---------------------------------------------------------------
 STAGES = ["GT items", "S1 found in lines (>=85)", "S4 in right section", "S5 entry matched",
           "S5 fields correct"]
@@ -490,19 +575,27 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--test-frozen", action="store_true",
                       help="also test_frozen, aggregates only; allowed once, logged")
     mode.add_argument("--lost-items", action="store_true",
-                      help="list items lost at S1 for dev and tuned (resume IDs only)")
+                      help="list lost items for dev and tuned (resume IDs only)")
+    ap.add_argument("--stage", choices=("S1", "S4", "S5"), default="S1",
+                    help="with --lost-items: which funnel step (default S1)")
     return ap
 
 
-def print_lost_items(results: dict, ids: dict) -> None:
-    """One row per item lost at S1: resume ID, section, index, cause, recoverable_by."""
+LOST_AT_FOR_STEP = {"S1": ("S1 text",), "S4": ("S4 section",), "S5": ("S5 entry", "S5 fields")}
+
+
+def print_lost_items(results: dict, ids: dict, step: str = "S1") -> None:
+    """One row per lost item: resume ID, section, index, cause, and recoverable_by (S1) or the
+    method that handled it (S4, S5). Never any text."""
     rid_of = {v["eval_id"]: v["resume_id"] for v in ids.values()}
-    print(f"{'resume_id':<12}{'section':<14}{'index':>6}  {'cause':<14}recoverable_by")
+    last = "recoverable_by" if step == "S1" else "method"
+    print(f"{'resume_id':<12}{'section':<14}{'index':>6}  {'cause':<28}{last}")
     for g in ("dev", "tuned"):
-        rows = sorted((rid_of[i["eval_id"]], i["section"], i["idx"], i["cause"], i["recoverable_by"])
-                      for i in results[g]["items"] if i["lost_at"] == "S1 text")
-        for rid, sec, idx, cause, rec in rows:
-            print(f"{rid:<12}{sec:<14}{idx:>6}  {cause:<14}{','.join(rec) or '-'}")
+        rows = sorted((rid_of[i["eval_id"]], i["section"], i["idx"], i["cause"],
+                       ",".join(i["recoverable_by"]) if step == "S1" else (i["method"] or ""))
+                      for i in results[g]["items"] if i["lost_at"] in LOST_AT_FOR_STEP[step])
+        for rid, sec, idx, cause, last_value in rows:
+            print(f"{rid:<12}{sec:<14}{idx:>6}  {cause:<28}{(last_value or '-').replace(' ', '_')}")
 
 
 def run(a: argparse.Namespace) -> int:
@@ -516,21 +609,26 @@ def run(a: argparse.Namespace) -> int:
 
     results = {}
     for g in order:
-        items, fps, incomplete = [], [], 0
+        items, fps, incomplete, checks = [], [], 0, []
         for stem in groups[g]:
             st = load_stages(stem)
             incomplete += not st["complete"]
             it, fp = diagnose_resume(ev.load_gt(stem), ev.load_pred(stem), st, ids[stem]["eval_id"])
             items += it
             fps += fp
-        results[g] = {"items": items, "fps": fps, "incomplete": incomplete, "n": len(groups[g])}
+            if g != "test_frozen":  # never looked at per resume for test_frozen
+                fired = load_checks(stem)
+                if fired is not None:
+                    checks.append((fired, {(i["lost_at"], i["section"]) for i in it if i["lost_at"] != "ok"}))
+        results[g] = {"items": items, "fps": fps, "incomplete": incomplete, "n": len(groups[g]),
+                      "checks": checks}
         if g != "test_frozen":
             out = common.reports_dir() / "funnel"
             common.write_text_inside(out / f"items_{g}.jsonl", _jsonl(items))
             common.write_text_inside(out / f"fps_{g}.jsonl", _jsonl(fps))
 
     if a.lost_items:
-        print_lost_items(results, ids)
+        print_lost_items(results, ids, a.stage)
         return 0
     print("=== FUNNEL: where GT items are lost (first failing stage) ===")
     for g, r in results.items():
@@ -556,6 +654,8 @@ def run(a: argparse.Namespace) -> int:
         print(f"  {sec:<13}{st:<12}{method[:51]:<52}" + "".join(f"{cnt[g]:>12}" for g in results))
     print("\n=== FALSE-POSITIVE CAUSES (unmatched predictions) ===")
     print_fps(results)
+    print("\n=== CHECK VALIDITY (dev + tuned): does a check fire where a real loss is? ===")
+    print_check_validity(results)
     return 0
 
 

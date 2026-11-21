@@ -221,3 +221,19 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# real data and outputs: never commit
+*.pdf
+data/
+outputs/
+review_queue/
+reports/
+eval/private/
+baselines/*_outputs/
+
+# local files
+.venv/
+.env
+__pycache__/
+.pytest_cache/
+

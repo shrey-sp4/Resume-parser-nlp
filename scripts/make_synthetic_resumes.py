@@ -196,7 +196,7 @@ def synthetic_ground_truth() -> dict[str, dict]:
                 _edu("B.Sc.", "bachelors", "Mathematics", "Riverbend College"),
             ],
             "experience": [
-                _exp("Assistant Professor", "Hillcrest University", "Jul 2023 - Present", "academic"),
+                _exp("Assistant Professor", "Department of Biology, Hillcrest University", "Jul 2023 - Present", "academic"),
                 _exp("Postdoctoral Fellow", "Northfield Institute of Science", "Aug 2021 - Jun 2023", "academic"),
                 _exp("Data Analyst", "Examplecorp Analytics Pvt Ltd", "Jan 2014 - Jun 2014", "industry"),
             ],
@@ -217,7 +217,7 @@ def synthetic_ground_truth() -> dict[str, dict]:
                 _edu("B.Tech.", "bachelors", "Engineering Physics", "Southgate College of Engineering"),
             ],
             "experience": [
-                _exp("Associate Professor", "Westbrook University", "2021 - present", "academic"),
+                _exp("Associate Professor", "School of Physics, Westbrook University", "2021 - present", "academic"),
                 _exp("Research Scientist", "Imaginary Labs Inc", "2019 - 2021", "industry"),
             ],
             "publications": [
@@ -238,7 +238,7 @@ def synthetic_ground_truth() -> dict[str, dict]:
                 _edu("Bachelor of Arts (Honours)", "bachelors", "Arts", "Stonebridge College"),
             ],
             "experience": [
-                _exp("Professor", "Maplewood University", "2020 – till date", "academic"),
+                _exp("Professor", "Faculty of Economics, Maplewood University", "2020 – till date", "academic"),
                 _exp("Lecturer", "Maplewood University", "2015 – 2020", "academic"),
             ],
             "publications": [

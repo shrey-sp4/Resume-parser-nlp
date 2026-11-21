@@ -6,7 +6,10 @@
   capitalised subject words right after it; in a table with no header row, the cell after the
   degree cell
 - year and grade for the sidecar
-- experience_type and publication type are built with their stages
+- experience dates as printed (ranges, single dates, "Present"-style ends) and their parsed form
+- experience_type from the institution: company endings -> industry, academic words or a known
+  name -> academic, other industry words -> industry, otherwise other
+- publication type is built with its stage
 """
 
 from __future__ import annotations
@@ -200,8 +203,105 @@ def find_grade(text: str) -> str:
     return m.group(0).strip() if m else ""
 
 
+_MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+_MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
+# one point in time: "Jul 2023", "July, 2023", "07/2023", "2023", "Jul'19", "Jul 19", "'19"
+# also "01/07/2019", "01-07-2019", "01.07.2019", "July 1, 2019", "1st July 2019"
+_DAY = r"\d{1,2}(?:st|nd|rd|th)?"
+_POINT = (rf"(?:(?:(?<!\d){_DAY}\s+{_MONTH}[\s,.\-]*|{_MONTH}\s+{_DAY},?\s+|{_MONTH}[\s,.\-]*"
+          rf"|(?<!\d)\d{{1,2}}\s*[/.\-]\s*\d{{1,2}}\s*[/.\-]\s*|(?<!\d)\d{{1,2}}\s*[/.\-]\s*)?(?<!\d)(?:19|20)\d{{2}}(?!\d)"
+          rf"|{_MONTH}\s*['’`]\s*\d{{2}}(?!\d)|(?<![A-Za-z]){_MONTH}\s+\d{{2}}(?![\d/:,])|['’`]\d{{2}}(?!\d))")
+_PRESENT = r"(?:present|current|till\s+date|till\s+now|to\s+date|todate|tilldate|date|now|ongoing|continuing|today)"
+_RANGE_SEP = r"\s*(?:-|–|—|−|~|\bto\b|\btill\b|\buntil\b)\s*"
+# a range ends in another point, a "Present"-style word, or two digits after a year ("2019-20")
+DATE_SPAN = re.compile(rf"(?<![A-Za-z]){_POINT}(?:{_RANGE_SEP}(?:{_POINT}|{_PRESENT}\b|(?<=[-–—])\d{{2}}(?![\d/])))?",
+                       re.IGNORECASE)
+_POINT_ONLY = re.compile(rf"^{_POINT}$", re.IGNORECASE)
+_PRESENT_ONLY = re.compile(rf"^{_PRESENT}$", re.IGNORECASE)
+
+
+def find_dates(text: str) -> tuple[str, int, int] | None:
+    """(dates as printed, start, end): the first date range, else the first single date with a
+    4-digit year or a month. A bare 2-digit number is never a date."""
+    best = None
+    for m in DATE_SPAN.finditer(text):
+        span = m.group(0).strip()
+        has_range = bool(re.search(_RANGE_SEP + r"\S", span, re.IGNORECASE)) and not _POINT_ONLY.match(span)
+        strong = has_range or YEAR.search(span) or re.match(_MONTH, span, re.IGNORECASE)
+        if not strong:
+            continue
+        if has_range:
+            return span, m.start(), m.start() + len(m.group(0).rstrip())
+        if best is None:
+            best = (span, m.start(), m.start() + len(m.group(0).rstrip()))
+    return best
+
+
+def _parse_point(text: str, current_year: int) -> tuple[str | None, int | None]:
+    t = text.strip().lower()
+    if not t or _PRESENT_ONLY.match(t):
+        return None, None
+    month = next((k + 1 for k, m in enumerate(_MONTHS) if re.search(rf"(?<![a-z]){m}", t)), None)
+    y4 = YEAR.search(t)
+    if y4:
+        year = int(y4.group(0))
+        nums = re.match(r"^(\d{1,2})\s*[/.\-]\s*(?:(\d{1,2})\s*[/.\-])?", t)
+        if month is None and nums:
+            m = int(nums.group(2) or nums.group(1))  # dd/mm/yyyy: the second number is the month
+            month = m if 1 <= m <= 12 else None
+    else:
+        y2 = re.search(r"(\d{2})(?!\d)", t)
+        if not y2:
+            return None, None
+        yy = int(y2.group(1))
+        year = 2000 + yy if 2000 + yy <= current_year + 6 else 1900 + yy
+    return (f"{year:04d}-{month:02d}" if month else f"{year:04d}"), year
+
+
+def parse_dates(printed: str, current_year: int) -> dict:
+    """{"start", "end", "start_year", "end_year", "ongoing"} from dates as printed. "Present"-style
+    ends give end None and ongoing True; a single date gives start only."""
+    text = (printed or "").strip()
+    first = re.match(rf"^{_POINT}", text, re.IGNORECASE)  # "01-07-2019 - ..." : the whole first date
+    if first and first.end() < len(text):
+        sep = re.match(rf"^{_RANGE_SEP}", text[first.end():], re.IGNORECASE)
+        parts = [text[: first.end()], text[first.end() + sep.end():]] if sep else [text]
+    else:
+        parts = [text]
+    start, start_year = _parse_point(parts[0], current_year)
+    end = end_year = None
+    ongoing = False
+    if len(parts) == 2:
+        if _PRESENT_ONLY.match(parts[1].strip()):
+            ongoing = True
+        else:
+            end, end_year = _parse_point(parts[1], current_year)
+    return {"start": start, "end": end, "start_year": start_year, "end_year": end_year, "ongoing": ongoing}
+
+
+@lru_cache(maxsize=1)
+def _industry_patterns() -> tuple[re.Pattern, re.Pattern]:
+    words = load_config("institutions.json").get("industry_keywords", [])
+    suffix_words = {"pvt", "private limited", "ltd", "limited", "inc", "llc", "llp", "corporation", "corp"}
+
+    def pat(ws):
+        return re.compile(r"(?<![A-Za-z])(?:" + "|".join(re.escape(w) for w in ws) + r")(?![A-Za-z])", re.IGNORECASE)
+    return pat(sorted(w for w in words if w in suffix_words) or ["pvt"]), pat(sorted(w for w in words if w not in suffix_words) or ["labs"])
+
+
 def experience_type(institution_text: str) -> str:
-    raise NotImplementedError("built together with experience extraction")
+    """academic / industry / other from the institution as printed. A company ending (Pvt, Ltd,
+    Inc, LLC, Corp) means industry; then an academic keyword or a known institution means academic;
+    then another industry word (Technologies, Labs, Solutions, ...) means industry; otherwise other."""
+    text = institution_text or ""
+    suffix, industry = _industry_patterns()
+    if suffix.search(text):
+        return "industry"
+    if has_institution(text):
+        return "academic"
+    if industry.search(text):
+        return "industry"
+    return "other"
 
 
 def publication_type(heading: str, venue: str) -> str:

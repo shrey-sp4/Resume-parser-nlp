@@ -151,7 +151,8 @@
         "raw_text": {"type": "string"},
         "year": {"type": ["string", "null"]},
         "grade": {"type": ["string", "null"]},
-        "method": {"type": "string"}
+        "method": {"type": "string"},
+        "no_dates": {"type": "boolean"}
       }
     }
   }

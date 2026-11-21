@@ -121,13 +121,14 @@ def run_output(pdf_path: Path, ctx: Context) -> StageResult:
     return result
 
 
-def _stage5_sidecar(record: PipelineRecord) -> tuple[dict, dict, dict]:
-    """personal_extra, provenance and excluded from the stage 5 data (empty when stage 5 did
-    not run). Provenance keys follow the main JSON: candidate_name, education[0], ..."""
+def _stage5_sidecar(record: PipelineRecord) -> tuple[dict, dict, dict, dict]:
+    """personal_extra, provenance, excluded and parsed_dates from the stage 5 data (empty when
+    stage 5 did not run). Keys follow the main JSON: candidate_name, education[0], experience[0], ..."""
     stage5 = record.results.get("stage5")
     data = stage5.data if stage5 is not None and isinstance(stage5.data, dict) else {}
     personal = data.get("personal") if isinstance(data.get("personal"), dict) else {}
     education = data.get("education") if isinstance(data.get("education"), dict) else {}
+    experience = data.get("experience") if isinstance(data.get("experience"), dict) else {}
     extra = {"emails": [], "phones": [], "phone_digits": [], "links": []}
     extra.update(personal.get("personal_extra") or {})
     provenance = {}
@@ -136,9 +137,14 @@ def _stage5_sidecar(record: PipelineRecord) -> tuple[dict, dict, dict]:
         provenance["candidate_name"] = {"page": source["page"], "lines": list(source["lines"]), "raw_text": ""}
     for i, side in enumerate(education.get("sides") or []):
         provenance[f"education[{i}]"] = dict(side)
+    parsed_dates = {}
+    for i, side in enumerate(experience.get("sides") or []):
+        provenance[f"experience[{i}]"] = dict(side)
+    for i, dates in enumerate(experience.get("parsed_dates") or []):
+        parsed_dates[f"experience[{i}]"] = {"start": dates.get("start"), "end": dates.get("end")}
     excluded = {"school_level_education": [dict(s) for s in education.get("excluded") or []],
                 "non_paper_publications": []}
-    return extra, provenance, excluded
+    return extra, provenance, excluded, parsed_dates
 
 
 def build_sidecar(record: PipelineRecord) -> dict:
@@ -152,7 +158,7 @@ def build_sidecar(record: PipelineRecord) -> dict:
         decision = stage6_data.get("decision", "ACCEPT")
 
     scores = stage6_data.get("section_scores") or {s: None for s in TARGET_SECTIONS}
-    extra, provenance, excluded = _stage5_sidecar(record)
+    extra, provenance, excluded, parsed_dates = _stage5_sidecar(record)
     return {
         "schema_version": SCHEMA_VERSION,
         "resume_id": record.resume_id,
@@ -164,7 +170,7 @@ def build_sidecar(record: PipelineRecord) -> dict:
         "personal_extra": extra,
         "provenance": provenance,
         "excluded": excluded,
-        "parsed_dates": {},
+        "parsed_dates": parsed_dates,
         "stage_report": {name: result.to_report() for name, result in record.results.items()},
     }
 

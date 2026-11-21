@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import make_synthetic_resumes as synth
 from resume_parser import clean, normalize, sections
 from resume_parser.entities import SPLIT_METHODS
 from resume_parser.entities.personal import NAME_METHODS
@@ -29,7 +30,8 @@ def test_main_json_is_valid_and_has_empty_fields(synthetic_pdfs):
     assert record.main["resume_file"] == "synthetic_b_table.pdf"
     assert record.main["candidate_name"] == "Jonas Fakely"
     assert [e["degree"] for e in record.main["education"]] == ["Ph.D.", "M.Tech.", "B.Tech."]
-    assert record.main["experience"] == [] and record.main["publications"] == []  # still stubs
+    assert record.main["experience"] == synth.synthetic_ground_truth()["synthetic_b_table"]["experience"]
+    assert record.main["publications"] == []  # still a stub
 
 
 def test_method_chains_are_registered_in_order():
@@ -52,7 +54,8 @@ def test_stage5_chooses_per_section(synthetic_pdfs):
     assert list(stage5.per_unit) == ["personal", "education", "experience", "publications"]
     assert stage5.per_unit["personal"].method_used == "top_lines"  # accepted first, the rest not run
     assert stage5.per_unit["education"].method_used == "anchor_split"
-    assert stage5.per_unit["experience"].method_used is None  # still stubs
+    assert stage5.per_unit["experience"].method_used == "date_anchor_split"
+    assert stage5.per_unit["publications"].method_used is None  # still a stub
 
 
 def test_stub_flags_match_what_the_methods_return():

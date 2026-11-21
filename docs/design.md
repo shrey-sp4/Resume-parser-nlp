@@ -279,9 +279,40 @@ method) go to the sidecar; school-level entries to `excluded.school_level_educat
 min(share of entries with a degree or institution, plausible years 1950 to current year + 6 and
 no header text; coverage of the section's lines), 0 without a higher-education entry.
 
-**Experience.** Split into entries using date ranges as anchors. Fields: job_title, institution (employer),
-dates as printed, then `experience_type`. Parsed start and end go to the sidecar. Raw text goes
-to the sidecar.
+**Experience** (built). All experience sections are read in order (jobs only: courses taught,
+responsibilities, projects and talks are already in `other`); a section boundary ends an entry.
+Continuation lines (a continuation word such as responsible, worked, courses taught at the start
+of the line, or a bullet with no date and no job title) join the previous entry's raw text and
+never start an entry. A job title counts at the start of a line or segment, after a lead-in
+("working as", "joined as", "currently", "position:", a bullet or a colon), or after other words
+when the same or the next line has dates or an institution; such a line is an entry line even
+when it starts with a continuation word. A title after "under", "supervised by", "reporting to",
+"guide:", ..., or right before an honorific, is someone else's; a mid-line title right before a
+capitalised name is too. Titles may have up to two prefixes (Visiting, Adjunct, Guest, Ad-hoc,
+...), kept as printed; "Head of ..." runs to the end of its segment. After splitting, an entry
+with no title but an institution or dates is joined to the entry right before it when that one
+has a title and lacks that slot (never across a section boundary).
+Methods: `date_anchor_split` (an entry starts at a line with dates or a job title from
+`config/titles.json`; a line starts a new entry only when it would fill a slot the current entry
+already has, a second title, second dates or a second institution-only line, so title, institution
+and dates written on separate lines in any order stay one entry; not used when most lines are table
+cells), `table_row_split` (as education: one row is one entry, a header row of words such as
+designation, organisation, duration is dropped and tells which column is which),
+`paragraph_split`, `whole_section_one_entry` (always WARN). An entry made only of lines from a
+block that stage 4 routed by `content_guess` is kept only with a job title and an institution or
+dates. Fields as printed: job_title (longest title, plus a bracket part written right after it;
+"of ..." or "in ..." is not added, as in the ground truth), institution (the first segment that is
+a department or holds an institution word; when it is a department, school, faculty or centre the
+following institution, department and short place segments of the line are kept too, otherwise
+only the institution segment; a bare IIT, NIT, IIIT, IIM, IISER or BITS keeps the place after it),
+dates (the first range: month names, 4- or 2-digit years, dd/mm/yyyy, dd-mm-yyyy, dd.mm.yyyy,
+"Month day, year", "day Month year", dash, en-dash, "to", "till", and
+"Present", "till date", ... kept as printed; else a single date), `experience_type`. Parsed start
+and end go to the sidecar `parsed_dates` ("Present" gives end null); raw text and provenance (with
+`no_dates`) to the sidecar. When a field is not clear it stays empty. Check: min(share of entries
+with a title or an institution, plausible years, end not before start and no header text;
+coverage), 0 when the section has lines but no entry; entries without dates are flagged
+`no_dates`, overlapping ranges are counted, neither is scored.
 
 **Publications.** Split into citations (numbering, year anchors, merge wrapped lines).
 Fields: title, year, venue, type (journal / conference / other; finer types such as book chapter
@@ -291,15 +322,16 @@ sidecar. Also read printed totals ("Total: 65") into `stated_totals`.
 
 **Methods for entry splitting, chosen per section:** `anchor_split`, `table_row_split`,
 `paragraph_split`, then `whole_section_one_entry` (always last, always WARN). Built for
-education; experience and publications are still stubs.
+education and experience (where the first method is `date_anchor_split`); publications is still a
+stub.
 **Methods for the name:** `top_lines`, `from_email`, `from_file_name` (lowest confidence, flagged).
 Accept thresholds per section are in `config/thresholds.json`.
 
 **Field normalization** (the values that the ground-truth format needs):
 - `degree_level` (doctorate / masters / bachelors / other) from `config/degrees.json`.
-- `experience_type` (academic / industry / other): university, college, institute, school,
-  research centre words -> academic; company words (Pvt, Ltd, Inc, Technologies) -> industry;
-  otherwise other.
+- `experience_type` (academic / industry / other), from the institution: a company ending (Pvt,
+  Ltd, Inc, LLC, Corp) -> industry; an academic keyword or a gazetteer name -> academic; another
+  industry word (Technologies, Labs, Solutions, ...) -> industry; otherwise other.
 - Publication `type` (journal / conference / other) from the author's heading, then venue words.
 - Strings such as degree, institution, job title and dates stay **as printed** in the CV,
   as in the ground truth. Parsed dates and cleaned names go to the sidecar file, not the main JSON.
@@ -407,7 +439,7 @@ industry, other}; publication `type` in {journal, conference, other}.
   `document`.
 - Attempt `status` is one of `ACCEPTED`, `BELOW_THRESHOLD`, `NO_OUTPUT`, `NOT_IMPLEMENTED`, `SKIPPED`.
 - Provenance `lines` are line ids (`p001_l0007`); education provenance also has `year`, `grade`
-  and `method`. `personal_extra` also has `phone_digits` (phones as digits, for matching).
+  and `method`; experience provenance has `method` and `no_dates`. `personal_extra` also has `phone_digits` (phones as digits, for matching).
 - The main JSON keeps the key order of 5.1. The sidecar, index and run summary use sorted keys.
 - Schema: `schema/meta.schema.json`.
 
@@ -508,7 +540,9 @@ evaluator's matching and field checks.
   - or the stage 5 method of its section
 - False positives get the first matching cause, from a fixed list: school-level entry, table
   header or skills line, non-paper publication, duplicate, wrapped-line fragment, bleed from
-  another section, other.
+  another section, other. Education and experience are printed in groups (header row, bleed,
+  split fragment, other; plus school-level for education and content-routed for experience: an
+  "other" entry whose lines all come from content_guess blocks).
 - Tables are per section, with dev and tuned side by side.
 - Per-item and false-positive files (`reports/funnel/`, no resume text) are written for dev and
   tuned only.

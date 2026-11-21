@@ -295,6 +295,7 @@ def method_chains() -> dict[str, tuple[Method, ...]]:
     from resume_parser import clean, normalize, sections
     from resume_parser.entities import SPLIT_METHODS
     from resume_parser.entities.education import SPLIT_METHODS as EDUCATION_METHODS
+    from resume_parser.entities.experience import SPLIT_METHODS as EXPERIENCE_METHODS
     from resume_parser.entities.personal import NAME_METHODS
     from resume_parser.extract.base import METHODS as LAYOUT_METHODS
 
@@ -303,8 +304,9 @@ def method_chains() -> dict[str, tuple[Method, ...]]:
         "stage2": tuple(clean.METHODS),
         "stage3": tuple(sections.METHODS),
         "stage4": tuple(normalize.METHODS),
-        "stage5": tuple(SPLIT_METHODS),  # experience and publications
+        "stage5": tuple(SPLIT_METHODS),  # publications
         "stage5.education": tuple(EDUCATION_METHODS),
+        "stage5.experience": tuple(EXPERIENCE_METHODS),
         "stage5.personal": tuple(NAME_METHODS),
     }
 

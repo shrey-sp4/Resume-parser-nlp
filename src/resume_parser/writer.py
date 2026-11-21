@@ -215,6 +215,8 @@ STAGE_FILES = {
     "stage4": "stage4_canonical.json",
     "stage5": "stage5_entities.json",
 }
+# every stage 1 method's lines per page, so the funnel can say which method had an item
+METHODS_FILE = "stage1_methods.json"
 
 
 def build_stage_file(record: PipelineRecord, stage: str) -> dict:
@@ -245,7 +247,7 @@ def write_stage_files(record: PipelineRecord, stages_dir: Path) -> list[Path]:
     """
     folder = require_inside_data_root(Path(stages_dir) / record.resume_id)
     folder.mkdir(parents=True, exist_ok=True)
-    for name in STAGE_FILES.values():
+    for name in (*STAGE_FILES.values(), METHODS_FILE):
         (folder / name).unlink(missing_ok=True)
     written = []
     for stage, name in STAGE_FILES.items():
@@ -253,4 +255,11 @@ def write_stage_files(record: PipelineRecord, stages_dir: Path) -> list[Path]:
             path = folder / name
             _write(path, dump_json(build_stage_file(record, stage), sort_keys=True))
             written.append(path)
+    stage1 = record.results.get("stage1")
+    if stage1 is not None and stage1.extra.get("outputs"):
+        path = folder / METHODS_FILE
+        methods = {"schema_version": SCHEMA_VERSION, "resume_id": record.resume_id, "stage": "stage1",
+                   "methods": stage1.extra["outputs"]}
+        _write(path, dump_json(methods, sort_keys=True))
+        written.append(path)
     return written

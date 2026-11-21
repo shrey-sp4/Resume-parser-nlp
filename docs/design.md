@@ -77,6 +77,13 @@ A shared helper in the runner (`run_with_fallbacks`) does the choosing:
    listing them, unless `--allow-stubs` is given.
 5. Some methods are last resorts that always give WARN when chosen
    (`whole_section_one_entry`, `from_file_name`, `keep_as_other_with_warning`).
+6. A stage may ask for every method to be run and scored even after one is accepted
+   (`run_all`, used in stage 1 so all scores are recorded). The choice rule is unchanged.
+   A method may have a condition (`run_if`); when it is false the method is recorded as
+   `SKIPPED`. A check may return the separate values behind its score; they are stored with
+   the attempt (`details`).
+7. A method that needs an optional dependency (OCR) is marked `optional`, not `stub`: it does
+   not block a run, and reports why it cannot run.
 
 The choice is made per unit where layouts differ inside one resume: per page in stage 1, per
 section in stage 5. The stage report records the method used and every method tried
@@ -97,27 +104,56 @@ always picks the same method.
   stage 1 decides whether the pages are usable (so OCR gets a chance to run).
 
 ### Stage 1: Layout extraction
-- Job: turn the PDF into a list of **lines**, each with: text, page, bounding box,
-  font size, bold, whether inside a table cell, reading-order index.
-- Methods, chosen per page: `pdfplumber_words_tables` (words with coordinates, tables read cell
-  by cell); `pdfminer_layout`; `pdfplumber_loose_spacing` (looser word spacing, for glued words);
-  `ocr_tesseract`. Any further extractor only if its licence is compatible with a public repo
-  (PyMuPDF is AGPL: check before using).
-- OCR is an optional dependency (pytesseract and the tesseract program). If it is not
-  installed, the method reports `ocr_unavailable`.
+- Job: turn the PDF into a list of **lines**. Every line has `id` (`p001_l0007`), `page`,
+  `text`, `bbox` (x0, top, x1, bottom), `font_size` (median), `bold` (share of characters in a
+  bold font), `in_table`, `cell_row`, `cell_col`, `row_id`, `segment_index` and `reading_order`.
+- Lines are built from words. Words whose tops are within 0.5 x font size form a row; a row is
+  split into segments where a gap is at least 2.5 x the row's median font size (so a justified
+  paragraph stays whole, but blocks side by side do not merge). Segments of one row share a
+  `row_id`, so stage 5 can join them again.
+- Methods, chosen per page:
+  1. `pdfplumber_words_tables`: lines from words; tables found by `find_tables` are read cell
+     by cell (one line per cell), and words inside a cell are not read again. Always runs.
+  2. `pdfminer_layout`: the same line structure from pdfminer's text lines, in pdfminer's own
+     reading order; no tables. Always runs (it is also the agreement reference).
+  3. `pdfplumber_loose_spacing`: method 1 with a tight and a wide word-spacing tolerance,
+     keeping the variant with fewer glued words. Runs only when method 1 was not accepted.
+  4. `ocr_tesseract`: optional (pytesseract and the tesseract program); reports
+     `ocr_unavailable` when missing. Not built yet.
+  Any further extractor only if its licence is compatible with a public repo (PyMuPDF is AGPL).
 - Pages that stage 0 marked `IMAGE_ONLY` only try OCR. If that gives nothing, the page is
   FAIL `no_text_layer`.
-- Checks: share of garbled characters (`(cid:N)`, replacement characters) under 1%; glued-word
-  rate low; agreement with the second extractor's words at least 90%; no empty pages.
+- Page score (0..1), label-free, settings in `thresholds.json` (`stage1_checks`, to calibrate):
+  - 0 when more than 1% of the characters are garbled (`(cid:N)`, replacement and private-use
+    characters); a page with no lines gives no output (`empty_page`);
+  - otherwise the word overlap with the other text method: shared words, as a multiset of
+    lowercase words (order does not matter), over the larger word count (method 1 and 3 are
+    compared with method 2, method 2 with method 1);
+  - halved when more than 5% of the words look glued: a run of 25+ letters, or 3+ lowercase
+    letters followed by an Uppercase and a lowercase letter; emails, URLs and DOIs are left
+    out, and an ignore list (PhD, LaTeX, MATLAB, BibTeX, ...) never counts.
+  The separate values (garbled rate, glued rate and count, overlap, words, lines) are stored
+  with every attempt. The stage metrics count the pages over the glued-word limit.
 - Gate: FAIL only when no page is usable. Some unusable pages give WARN.
+- With `--save-stages`, every method's lines per page are also saved (`stage1_methods.json`).
 
 ### Stage 2: Cleaning
-- Job: remove repeated page headers and footers; remove bullet and icon glyphs; join lines that
-  wrap; fix hyphenation; normalise unicode and spaces.
+- Job: clean the stage 1 lines, keeping every line's `id`, `page` and `bbox`.
 - Methods: `full_clean`; `conservative_clean` (glyphs and whitespace only); `raw_lines` (no change).
+- `full_clean`:
+  - removes repeated page headers and footers, only on documents of 3 or more pages: the
+    same text (digits masked, so page numbers match) in the same vertical band (within 5 pt,
+    in the top or bottom 12% of the page) on at least half the pages;
+  - strips bullet and icon glyphs, `(cid:N)` and replacement characters; normalises unicode
+    (NFKC) and whitespace;
+  - joins a wrapped line to the one above, fixing a hyphen at the line end, only inside
+    paragraph blocks: neither line in a table cell, a small vertical gap (at most 0.6 x font
+    size), the same left edge (within 2 pt), the next line starting with a lowercase letter.
+    A joined line keeps the first line's id and lists the others in `joined_ids`. Wrapped
+    citations are joined in stage 5, not here.
 - Check: letters and digits kept at least 95% (excluding removed headers, footers, glyphs).
-  A drop means the cleaner deleted real content.
-- Gate: WARN if below the threshold; use the uncleaned lines for that page.
+  A drop means the cleaner deleted real content; the next method is then tried.
+- Settings in `thresholds.json` (`stage2_clean`, to calibrate).
 
 ### Stage 3: Section detection
 - Job: find where each section starts and ends, and give each block a raw label (the heading as
@@ -344,7 +380,10 @@ never names.
 
 **Groups.** `ground_truth_v2/_split.json` lists **dev** (15, used for building) and
 **test_frozen** (15, scored once at the end, aggregates only). **tuned** is every other GT
-file (the first 10). Entries in the split may be stems or file names.
+file (the first 10). Entries in the split may be stems, file names or resume IDs (looked up
+in `private/id_map.json`). `cli run --groups` uses the same split: the default is
+`dev,tuned`; test_frozen is processed only when named, and is then never shown per resume.
+PDFs without ground truth are the group `unlabelled`.
 
 **IDs.** Console tables show the pipeline's `resume_id`. Files written by `eval/` (`--json`
 results, funnel item files) use a salted `eval_id` = `"e_"` + sha256(salt + stem)[:8]. The
@@ -383,6 +422,12 @@ evaluator's matching and field checks.
 | S5 fields | Is every checkable field correct? | Field accuracy |
 | Completeness | Is a matched entry truncated, and where was it cut (S1, S4 or S5)? | Truncation rate |
 
+- Items lost at S1 get one cause, the first that fits: garbled (the best page is over the
+  garbled limit), glued words (found once spaces are removed), table cell (all words are
+  there, all in table-cell lines), wrong order (all words there, not together), missing text,
+  other. Each also lists the stage 1 methods whose own lines contain it (`recoverable_by`,
+  from `stage1_methods.json`). `funnel.py --lost-items` lists them for dev and tuned, showing
+  only resume ID, section, index, cause and `recoverable_by`.
 - Each lost item is also given the method that handled it:
   - the stage 1 method of the page that matches it best
   - the stage 3 and stage 4 methods
@@ -399,10 +444,11 @@ evaluator's matching and field checks.
     summary
 
 **Saved stage files** (`cli run --save-stages`): `reports/stages/<resume_id>/stage1_lines.json`,
-`stage3_sections.json`, `stage4_canonical.json` and `stage5_entities.json`.
+`stage1_methods.json` (every stage 1 method's lines per page), `stage3_sections.json`,
+`stage4_canonical.json` and `stage5_entities.json`.
 - Each holds `{schema_version, resume_id, stage, status, method_used, per_unit, data}`.
 - `data` is what the stage passes forward:
-  - stage 1: `{page_id: {"lines": [{"text", ...}]}}`
+  - stage 1: `{page_id: {"method", "lines": [line, ...], "width", "height"}}` (line fields in section 4)
   - stage 3: `{"blocks": [{"heading_raw", "lines"}]}`
   - stage 4: the Canonical Document (section 4)
   - stage 5: the per-unit data
@@ -442,9 +488,9 @@ resume-parser/
   config/   section_aliases.json  degrees.json  titles.json  institutions.json  thresholds.json
   schema/   resume.schema.json  meta.schema.json  run_index.schema.json
   src/resume_parser/
-     intake.py  pipeline.py  cli.py  schema.py
+     intake.py  pipeline.py  cli.py  schema.py  groups.py   (groups.py: dev / tuned / test_frozen split)
      report.py                                   (run summary, section 5.4)
-     extract/  base.py  pdfplumber_extractor.py  pdfminer_extractor.py  ocr_extractor.py
+     extract/  base.py  lines.py  source.py  pdfplumber_extractor.py  pdfminer_extractor.py  ocr_extractor.py
      clean.py  sections.py  normalize.py        (normalize.py builds the Canonical Document)
      entities/ personal.py  education.py  experience.py  publications.py
      field_norm.py  validate.py  scoring.py  writer.py   (writer.py writes main JSON + sidecar + index)
@@ -475,7 +521,7 @@ Build one stage at a time. A stage is done when it passes its checks on dev and 
 
 | Order | Stage | Done when (proposed, adjust after first measurement) |
 |---|---|---|
-| 1 | Skeleton, schema, evaluation harness, synthetic fixtures, guards | Tests pass on fake resumes; harness reproduces old funnel numbers on old outputs |
+| 1 | Skeleton, schema, evaluation harness, synthetic fixtures, guards | Tests pass on fake resumes; harness works on synthetic data and loads the real ground truth |
 | 2 | Stages 0, 1, 2 | Stage 1 recall of GT strings at least 97% on dev (fuzzy 85) |
 | 3 | Stages 3 and 4 (sections and normalization layer) | Routing recall at least 95% for the four sections; Canonical Document checks pass (no line lost or duplicated) |
 | 4 | Stage 5 personal, education | Entry recall at least 90% |

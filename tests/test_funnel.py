@@ -4,6 +4,7 @@ positives get the right cause, methods are reported, and test_frozen runs once o
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -93,13 +94,17 @@ def test_resume_without_stage_files_is_reported(data_dir, capsys):
 
 
 def test_runs_on_stage_files_saved_by_the_pipeline(data_dir, capsys):
-    """The stubs save empty stage data; the funnel must read those files without failing."""
+    """Real stage 1 files from the pipeline: every GT item of the fake resumes is found in
+    the stage 1 lines (stage 4 is still a stub, so items stop at S4)."""
     synth.build_all(data_dir / "pdfs")
     assert cli_main(["run", "--allow-stubs", "--save-stages"]) == 0
     write_ground_truth(data_dir)
     assert funnel.main([]) == 0
     assert "--save-stages" not in capsys.readouterr().out  # the files are there
-    assert all(r["lost_at"] == "S1 text" for r in _items(data_dir).values())
+    for group in ("dev", "tuned"):
+        items = _items(data_dir, group).values()
+        assert items and all(r["s1_ge95"] for r in items), [r["lost_at"] for r in items]
+        assert all(r["lost_at"] == "S4 section" for r in items)
 
 
 # ---------------------------------------------------------------- test_frozen guard
@@ -150,3 +155,68 @@ def test_no_names_in_any_output(data_dir, capsys):
             assert name not in text
         assert "synthetic_" not in text
         assert "Northfield" not in text and "Modelling gene" not in text  # no resume text either
+
+
+# ---------------------------------------------------------------- what the funnel prints
+
+LOST_ROW = re.compile(
+    r"^r_[0-9a-f]{8}\s+(name|education|experience|publications)\s+\d+\s+"
+    r"(garbled|glued words|table cell|wrong order|missing text|other)\s+(\S+)$"
+)
+
+
+def _gt_strings() -> set[str]:
+    strings = set()
+    for gt in synth.synthetic_ground_truth().values():
+        strings.add(gt["candidate_name"])
+        for sec in ("education", "experience", "publications"):
+            for e in gt[sec]:
+                strings |= {v for k, v in e.items() if k not in ("degree_level", "experience_type", "type", "year")
+                            and len(v) > 6}
+    return strings
+
+
+def test_lost_items_print_only_ids_sections_indexes_causes_and_methods(data_dir, capsys):
+    _setup(data_dir)
+    assert funnel.main(["--lost-items"]) == 0
+    out = capsys.readouterr().out
+    header, *rows = out.strip().splitlines()
+    assert header.split() == ["resume_id", "section", "index", "cause", "recoverable_by"]
+    assert rows, "the removed publication must be listed"
+    assert all(LOST_ROW.match(r) for r in rows), rows
+    assert f"{resume_id_for(DEV)} " in rows[0] and "publications" in rows[0]
+
+
+def test_funnel_output_has_no_text_names_or_stems(data_dir, capsys):
+    _setup(data_dir)
+    assert funnel.main([]) == 0
+    assert funnel.main(["--lost-items"]) == 0
+    out = capsys.readouterr().out
+    for s in _gt_strings():
+        assert s not in out, s
+    assert "synthetic_" not in out and ".pdf" not in out and ".json" not in out
+
+
+def test_s1_causes(data_dir, capsys):
+    """Words out of order are 'wrong order'; a title of short words with its spaces lost is
+    'glued words' (with only a few spaces lost, fuzzy matching still finds it)."""
+    from eval_helpers import gt_all
+
+    gts = gt_all()
+    gts[DEV]["publications"][1]["title"] = "To be or not to be is up to us as we go on"
+    write_ground_truth(data_dir, gts)
+    for stem, gt in gts.items():
+        write_prediction(data_dir, stem, gt)
+        write_stage_files(data_dir, stem, gt)
+    gt = gts[DEV]
+    folder = write_stage_files(data_dir, DEV, gt, drop={("publications", 0), ("publications", 1)})
+    path = folder / "stage1_lines.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    words = gt["publications"][0]["title"].split()
+    record["data"]["page_001"]["lines"] += [{"text": " ".join(reversed(words))},
+                                            {"text": "".join(gt["publications"][1]["title"].split())}]
+    path.write_text(json.dumps(record), encoding="utf-8")
+    assert funnel.main([]) == 0
+    items = _items(data_dir)
+    assert items[("publications", 0)]["cause"] == "wrong order"
+    assert items[("publications", 1)]["cause"] == "glued words"

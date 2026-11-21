@@ -23,7 +23,9 @@ def test_report_counts_for_three_fake_resumes(data_dir, capsys):
         counts.pop("not_implemented")
         assert counts == {"entered": 3, "ok": 3, "warn": 0, "fail": 0, "stopped": 0}
     assert s["method_usage"]["stage0"] == {"open_pdfplumber": 3}
-    assert s["method_usage"]["stage2"] == {"none": 3}
+    assert s["method_usage"]["stage1"] == {"pdfplumber_words_tables": 3}  # one page each
+    assert s["method_usage"]["stage2"] == {"full_clean": 3}
+    assert s["method_usage"]["stage3"] == {"none": 3}
     assert s["method_usage"]["stage5"] == {"none": 12}  # 4 sections x 3 resumes
     assert s["method_usage"]["stage7"] == {"build_and_validate": 3}
     assert s["fallbacks_used"]["total"] == 0
@@ -46,8 +48,8 @@ def test_report_counts_units_passed_as_not_implemented(data_dir, capsys):
     passed = {name: counts["not_implemented"] for name, counts in stages.items()}
     assert passed == {
         "stage0": 0,
-        "stage1": _page_total(data_dir),  # every page
-        "stage2": 3,
+        "stage1": 0,  # built: every page is read
+        "stage2": 0,  # built
         "stage3": 3,
         "stage4": 3,
         "stage5": 12,  # 4 sections x 3 resumes
@@ -69,7 +71,7 @@ def test_report_counts_with_a_stopped_resume(data_dir, capsys):
     }
     # The scanned page FAILs, so it is not counted as passed.
     assert s["stages"]["stage1"] == {
-        "entered": 4, "ok": 3, "warn": 0, "fail": 1, "stopped": 1, "not_implemented": _page_total(data_dir) - 1
+        "entered": 4, "ok": 3, "warn": 0, "fail": 1, "stopped": 1, "not_implemented": 0
     }
     assert s["stages"]["stage2"]["entered"] == 3
 

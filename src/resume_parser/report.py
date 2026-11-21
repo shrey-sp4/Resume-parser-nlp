@@ -42,7 +42,7 @@ def _choices(stage: dict) -> list[tuple[str | None, list[dict], str]]:
 def _is_fallback(method_used: str | None, tried: list[dict]) -> bool:
     if method_used is None:
         return False
-    implemented = [a["method"] for a in tried if a["status"] != "NOT_IMPLEMENTED"]
+    implemented = [a["method"] for a in tried if a["status"] not in ("NOT_IMPLEMENTED", "SKIPPED")]
     return bool(implemented) and implemented[0] != method_used
 
 

@@ -3,6 +3,7 @@
 Everything is read from and written to RESUME_DATA_DIR only:
     ground_truth_v2/<stem>.json      ground truth (GT v2, docs/design.md section 5.1)
     ground_truth_v2/_split.json      {"dev": [...], "test_frozen": [...]}; tuned = every other GT file
+                                     (read by resume_parser.groups, shared with cli run --groups)
     outputs/<stem>.json              predictions (same format as the ground truth)
     reports/stages/<resume_id>/      saved stage files (cli run --save-stages)
     reports/test_frozen_runs.log     one JSON line per test_frozen run
@@ -23,10 +24,10 @@ import json
 import secrets
 from pathlib import Path
 
+from resume_parser import groups as groups_mod
 from resume_parser.schema import CONFIG_DIR, data_root, read_json, require_inside_data_root, resume_id_for
 
-GROUPS = ("dev", "tuned", "test_frozen")
-SPLIT_FILE = "_split.json"
+GROUPS = groups_mod.GT_GROUPS
 FROZEN_LOG = "test_frozen_runs.log"
 
 
@@ -57,14 +58,6 @@ def private_dir() -> Path:
     return data_root() / "private"
 
 
-def _stem(entry: str) -> str:
-    name = Path(str(entry)).name
-    for suffix in (".json", ".pdf"):
-        if name.lower().endswith(suffix):
-            return name[: -len(suffix)]
-    return name
-
-
 def write_text_inside(path: Path, text: str) -> Path:
     """Write a UTF-8 file with \\n newlines, only under RESUME_DATA_DIR."""
     path = require_inside_data_root(path)
@@ -79,28 +72,10 @@ def write_text_inside(path: Path, text: str) -> Path:
 
 def load_groups() -> dict[str, list[str]]:
     """Stems per group, each list sorted. tuned is every GT file not in dev or test_frozen."""
-    folder = gt_dir()
-    split_path = folder / SPLIT_FILE
-    if not split_path.is_file():
-        raise EvalError(f"ground_truth_v2/{SPLIT_FILE} is missing.")
-    split = read_json(split_path)
-    all_stems = sorted(p.stem for p in folder.glob("*.json") if not p.name.startswith("_"))
-    known = set(all_stems)
-
-    groups: dict[str, list[str]] = {}
-    for name in ("dev", "test_frozen"):
-        stems = sorted({_stem(s) for s in split.get(name, [])})
-        missing = [s for s in stems if s not in known]
-        if missing:
-            ids = ", ".join(resume_id_for(s) for s in missing)
-            raise EvalError(f"{SPLIT_FILE}: {name} lists {len(missing)} file(s) with no ground truth ({ids}).")
-        groups[name] = stems
-    both = set(groups["dev"]) & set(groups["test_frozen"])
-    if both:
-        raise EvalError(f"{SPLIT_FILE}: {len(both)} file(s) are in both dev and test_frozen.")
-    taken = set(groups["dev"]) | set(groups["test_frozen"])
-    groups["tuned"] = [s for s in all_stems if s not in taken]
-    return {g: groups[g] for g in GROUPS}
+    try:
+        return groups_mod.load_groups()
+    except groups_mod.GroupError as exc:
+        raise EvalError(str(exc)) from None
 
 
 # ---------------------------------------------------------------- IDs

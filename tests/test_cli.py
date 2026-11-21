@@ -91,7 +91,8 @@ def test_run_without_flag_works_once_no_stubs_are_left(data_dir, monkeypatch, ca
 
 # ---------------------------------------------------------------- saved stage files
 
-STAGE_FILE_NAMES = ["stage1_lines.json", "stage3_sections.json", "stage4_canonical.json", "stage5_entities.json"]
+STAGE_FILE_NAMES = ["stage1_lines.json", "stage1_methods.json", "stage3_sections.json",
+                    "stage4_canonical.json", "stage5_entities.json"]
 
 
 def _files_outside(tmp_path, data_dir) -> set:
@@ -124,7 +125,7 @@ def test_save_stages_removes_stale_files(data_dir, capsys):
     stale.parent.mkdir(parents=True)
     stale.write_text("{}", encoding="utf-8")
     assert main(["run", "--allow-stubs", "--save-stages"]) == 0
-    assert sorted(p.name for p in stale.parent.iterdir()) == ["stage1_lines.json"]
+    assert sorted(p.name for p in stale.parent.iterdir()) == ["stage1_lines.json", "stage1_methods.json"]
 
 
 def test_no_stage_files_without_the_flag(data_dir, capsys):
@@ -133,3 +134,57 @@ def test_no_stage_files_without_the_flag(data_dir, capsys):
     synth.build_all(data_dir / "pdfs")
     assert main(["run", "--allow-stubs"]) == 0
     assert not (data_dir / "reports" / "stages").exists()
+
+
+# ---------------------------------------------------------------- --groups
+
+
+def _labelled(data_dir):
+    """Fake PDFs plus ground truth: dev = resume a, tuned = resume b, test_frozen = resume c."""
+    import make_synthetic_resumes as synth
+    from eval_helpers import write_ground_truth
+
+    synth.build_all(data_dir / "pdfs")
+    write_ground_truth(data_dir)
+
+
+def _processed(data_dir) -> set[str]:
+    return {p.name[: -len(".meta.json")] for p in (data_dir / "outputs").glob("*.meta.json")}
+
+
+def test_groups_default_to_dev_and_tuned(data_dir, capsys):
+    _labelled(data_dir)
+    assert main(["run", "--allow-stubs"]) == 0
+    out = capsys.readouterr().out
+    assert _processed(data_dir) == {"synthetic_a_simple", "synthetic_b_table"}
+    assert "groups: dev 1, tuned 1" in out
+    assert resume_id_for("synthetic_c_variants") not in out
+
+
+def test_test_frozen_runs_only_when_named_and_is_not_shown_per_resume(data_dir, capsys):
+    _labelled(data_dir)
+    assert main(["run", "--allow-stubs", "--groups", "test_frozen"]) == 0
+    out = capsys.readouterr().out
+    assert _processed(data_dir) == {"synthetic_c_variants"}
+    assert resume_id_for("synthetic_c_variants") not in out
+    assert "test_frozen: 1 processed (not shown per resume)" in out
+
+
+def test_one_test_frozen_pdf_is_refused_unless_named(data_dir, capsys):
+    _labelled(data_dir)
+    pdf = str(data_dir / "pdfs" / "synthetic_c_variants.pdf")
+    assert main(["run", "--allow-stubs", pdf]) == 2
+    assert "not in the groups" in capsys.readouterr().err
+    assert _processed(data_dir) == set()
+    assert main(["run", "--allow-stubs", "--groups", "dev,test_frozen", pdf]) == 0
+
+
+def test_bad_group_names_and_missing_split_are_refused(data_dir, capsys):
+    import make_synthetic_resumes as synth
+
+    synth.build_all(data_dir / "pdfs")
+    assert main(["run", "--allow-stubs", "--groups", "dev"]) == 2  # no _split.json yet
+    _labelled(data_dir)
+    assert main(["run", "--allow-stubs", "--groups", "dev,everything"]) == 2
+    assert "--groups takes" in capsys.readouterr().err
+    assert _processed(data_dir) == set()

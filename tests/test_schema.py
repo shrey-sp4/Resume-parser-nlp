@@ -45,8 +45,9 @@ VALID_META = {
                 "page_001": {
                     "method_used": "pdfminer_layout",
                     "methods_tried": [
-                        {"method": "pdfplumber_words_tables", "score": 0.5, "status": "BELOW_THRESHOLD", "reasons": []},
-                        {"method": "pdfminer_layout", "score": 0.95, "status": "ACCEPTED", "reasons": []},
+                        {"method": "pdfplumber_words_tables", "score": 0.5, "status": "BELOW_THRESHOLD", "reasons": [],
+                         "details": {"overlap": 0.62, "glued_rate": 0.0}},
+                        {"method": "pdfminer_layout", "score": 0.95, "status": "ACCEPTED", "reasons": [], "details": {}},
                     ],
                     "status": "OK",
                 }

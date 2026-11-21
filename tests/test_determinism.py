@@ -28,18 +28,20 @@ def test_two_runs_are_byte_identical(data_dir, tmp_path, capsys):
     synth.build_all(data_dir / "pdfs")
     synth.make_image_only_pdf(data_dir / "pdfs" / "synthetic_d_scan.pdf")
 
-    assert main(["run", "--allow-stubs"]) == 0
+    assert main(["run", "--allow-stubs", "--save-stages"]) == 0
     first = _snapshot(data_dir)
     _clear(data_dir)
-    assert main(["run", "--allow-stubs"]) == 0
+    assert main(["run", "--allow-stubs", "--save-stages"]) == 0
     second = _snapshot(data_dir)
 
     assert first == second
+    assert sum(k.endswith("stage1_methods.json") for k in first) == 4  # stage files are compared too
     assert "reports/run_summary.json" in first
     assert "outputs/run_index.json" in first
     # 3 main JSONs (the scan stops at stage 1), 4 sidecars, 1 index
     assert sum(k.endswith(".meta.json") for k in first) == 4
-    assert sum(k.endswith(".json") and not k.endswith(".meta.json") for k in first) == 3 + 1 + 1
+    outputs = [k for k in first if k.startswith("outputs/")]
+    assert sum(k.endswith(".json") and not k.endswith(".meta.json") for k in outputs) == 3 + 1
 
 
 def test_outputs_have_no_absolute_paths_or_names(data_dir, capsys):

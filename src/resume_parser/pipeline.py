@@ -48,6 +48,15 @@ class _Choice:
     data: Any
     status: Status
     reasons: tuple[Reason, ...]
+    outputs: dict  # method name -> data, for every method that gave output
+
+
+def _score_and_details(result) -> tuple[float, tuple]:
+    """A check returns a score, or (score, {name: value}) with the values behind it."""
+    if isinstance(result, tuple):
+        score, details = result
+        return _clamp(score), tuple(sorted((details or {}).items()))
+    return _clamp(result), ()
 
 
 def _clamp(score: float) -> float:
@@ -70,6 +79,7 @@ def _choose(
     require_output: bool,
     fail_if_unusable: bool,
     unusable_code: str,
+    run_all: bool = False,
 ) -> _Choice:
     """Try methods in order and pick one. See run_with_fallbacks for the rules."""
     attempts: list[Attempt] = []
@@ -77,6 +87,10 @@ def _choose(
     accepted: int | None = None
 
     for method in methods:
+        if method.run_if is not None and not method.run_if(list(attempts)):
+            attempts.append(Attempt(method.name, None, AttemptStatus.SKIPPED))
+            outputs.append(None)
+            continue
         out = method.fn(payload)
         if not out.implemented:
             attempts.append(Attempt(method.name, None, AttemptStatus.NOT_IMPLEMENTED, out.reasons))
@@ -86,14 +100,15 @@ def _choose(
             attempts.append(Attempt(method.name, None, AttemptStatus.NO_OUTPUT, out.reasons))
             outputs.append(None)
             continue
-        score = _clamp(check(out.data))
+        score, details = _score_and_details(check(out.data))
         passed = score >= threshold
         status = AttemptStatus.ACCEPTED if passed else AttemptStatus.BELOW_THRESHOLD
-        attempts.append(Attempt(method.name, score, status, out.reasons))
+        attempts.append(Attempt(method.name, score, status, out.reasons, details))
         outputs.append(out)
-        if passed:
+        if passed and accepted is None:
             accepted = len(attempts) - 1
-            break
+            if not run_all:
+                break
 
     chosen: int | None
     reasons: list[Reason] = []
@@ -129,18 +144,19 @@ def _choose(
                 status = Status.WARN
                 reasons.append(Reason(unusable_code))
 
+    all_outputs = {a.method: o.data for a, o in zip(attempts, outputs) if o is not None}
     if chosen is not None:
         method = methods[chosen]
         reasons.extend(outputs[chosen].reasons)
         if method.warn_code:
             status = worst([status, Status.WARN])
             reasons.append(Reason(method.warn_code))
-        return _Choice(method.name, tuple(attempts), outputs[chosen].data, status, _dedupe(reasons))
+        return _Choice(method.name, tuple(attempts), outputs[chosen].data, status, _dedupe(reasons), all_outputs)
 
     if status is not Status.OK:
         for a in attempts:
             reasons.extend(r for r in a.reasons if r.code not in INFO_CODES)
-    return _Choice(None, tuple(attempts), None, status, _dedupe(reasons))
+    return _Choice(None, tuple(attempts), None, status, _dedupe(reasons), all_outputs)
 
 
 def run_with_fallbacks(
@@ -152,10 +168,16 @@ def run_with_fallbacks(
     units: Sequence[Unit] | None = None,
     fail_if_unusable: bool = False,
     unusable_code: str = "no_usable_output",
+    run_all: bool = False,
 ) -> StageResult:
     """Run methods in order and keep the first one whose check score reaches the threshold.
 
-    - check(data) gives a score in [0, 1] for one method's output.
+    - check(data) gives a score in [0, 1] for one method's output, or (score, details)
+      where details are the separate values behind the score (recorded per attempt).
+      A unit may bring its own check.
+    - With run_all, every method still runs (and is scored) after one is accepted, so
+      all scores are recorded; the choice rule does not change. A method with run_if
+      runs only when run_if(attempts so far) is true, otherwise it is SKIPPED.
     - Stub methods (not implemented) are recorded but never chosen.
     - If no method reaches the threshold, the best-scoring output is kept and the
       status is WARN. Ties go to the earlier method.
@@ -168,7 +190,7 @@ def run_with_fallbacks(
       failure gives WARN.
     """
     if units is None:
-        c = _choose(methods, check, accept_threshold, payload, False, fail_if_unusable, unusable_code)
+        c = _choose(methods, check, accept_threshold, payload, False, fail_if_unusable, unusable_code, run_all)
         return StageResult(
             stage=stage,
             status=c.status,
@@ -177,22 +199,26 @@ def run_with_fallbacks(
             reasons=list(c.reasons),
             method_used=c.method_used,
             methods_tried=list(c.attempts),
+            extra={"outputs": c.outputs} if run_all else {},
         )
 
     per_unit: dict[str, UnitChoice] = {}
     data: dict[str, Any] = {}
     reasons: list[Reason] = []
     statuses: list[Status] = []
+    unit_outputs: dict[str, dict] = {}
     for unit in units:
         c = _choose(
             unit.methods if unit.methods is not None else methods,
-            check,
+            unit.check if unit.check is not None else check,
             unit.accept_threshold if unit.accept_threshold is not None else accept_threshold,
             unit.payload,
             unit.require_output,
             fail_if_unusable,
             unusable_code,
+            run_all,
         )
+        unit_outputs[unit.unit_id] = c.outputs
         per_unit[unit.unit_id] = UnitChoice(c.method_used, c.attempts, c.status)
         data[unit.unit_id] = c.data
         statuses.append(c.status)
@@ -221,6 +247,7 @@ def run_with_fallbacks(
         reasons=list(_dedupe(reasons)),
         method_used="per_unit",
         per_unit=per_unit,
+        extra={"outputs": unit_outputs} if run_all else {},
     )
 
 
@@ -284,6 +311,13 @@ def unimplemented_methods() -> list[str]:
     """Sorted "stageN: method" names of every method still marked as a stub."""
     return sorted(
         f"{stage}: {m.name}" for stage, chain in method_chains().items() for m in chain if m.stub
+    )
+
+
+def optional_methods() -> list[str]:
+    """Sorted "stageN: method" names of methods that need an optional dependency (OCR)."""
+    return sorted(
+        f"{stage}: {m.name}" for stage, chain in method_chains().items() for m in chain if m.optional
     )
 
 

@@ -3,7 +3,9 @@
     python -m resume_parser.cli run [PDF]     process RESUME_DATA_DIR/pdfs (or one file);
                                               refuses while stub methods are left,
                                               unless --allow-stubs is given;
-                                              --save-stages keeps stage output for eval/funnel.py
+                                              --save-stages keeps stage output for eval/funnel.py;
+                                              --groups picks GT groups (default dev,tuned;
+                                              test_frozen only when named)
     python -m resume_parser.cli validate-gt   check RESUME_DATA_DIR/ground_truth_v2/*.json
 
 Output shows resume IDs only, never names, emails or phone numbers.
@@ -15,13 +17,31 @@ import argparse
 import sys
 from pathlib import Path
 
+from resume_parser import groups as groups_mod
 from resume_parser.schema import DataDirError, data_root, read_json, resume_id_for, schema_errors
+
+DEFAULT_GROUPS = "dev,tuned"
 
 
 def _pdfs_in(folder: Path) -> list[Path]:
     if not folder.is_dir():
         return []
     return sorted((p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".pdf"), key=lambda p: p.name)
+
+
+def _select_by_group(pdfs: list[Path], groups_arg: str | None) -> tuple[list[tuple[Path, str]], list[str]]:
+    """(pdf, group) pairs to process, and the groups asked for.
+
+    With a _split.json, only the named groups run (default dev,tuned); test_frozen runs only
+    when named. Without one (no ground truth set up), every PDF runs and --groups is refused.
+    """
+    if not groups_mod.has_split():
+        if groups_arg is not None:
+            raise groups_mod.GroupError("--groups needs ground_truth_v2/_split.json.")
+        return [(p, "unlabelled") for p in pdfs], []
+    wanted = groups_mod.parse_group_list(groups_arg if groups_arg is not None else DEFAULT_GROUPS)
+    where = groups_mod.group_of_stems([p.stem for p in pdfs])
+    return [(p, where[p.stem]) for p in pdfs if where[p.stem] in wanted], wanted
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -48,15 +68,31 @@ def cmd_run(args: argparse.Namespace) -> int:
         if not pdf.is_file():
             print("run: the given PDF does not exist.", file=sys.stderr)
             return 2
-        pdfs = [pdf]
+        candidates = [pdf]
     else:
-        pdfs = _pdfs_in(root / "pdfs")
-        if not pdfs:
+        candidates = _pdfs_in(root / "pdfs")
+        if not candidates:
             print("run: no PDFs found in RESUME_DATA_DIR/pdfs.")
+    try:
+        selected, wanted = _select_by_group(candidates, args.groups)
+    except groups_mod.GroupError as exc:
+        print(f"run: {exc}", file=sys.stderr)
+        return 2
+    if args.pdf and not selected:
+        print(f"run: {resume_id_for(candidates[0].name)} is not in the groups asked for "
+              f"({','.join(wanted)}).", file=sys.stderr)
+        return 2
+    if wanted:
+        counts = {g: sum(1 for _, gr in selected if gr == g) for g in wanted}
+        print("groups: " + ", ".join(f"{g} {n}" for g, n in counts.items()))
+    pdfs = [p for p, _ in selected]
+    group_of = {p: g for p, g in selected}
+    frozen_done = 0
 
     errors = 0
     for pdf in pdfs:
         rid = resume_id_for(pdf.name)
+        quiet = group_of[pdf] == "test_frozen"  # never show test_frozen per resume
         try:
             record = run_pipeline(pdf)
             write_resume(record, out_dir)
@@ -64,10 +100,15 @@ def cmd_run(args: argparse.Namespace) -> int:
                 write_stage_files(record, root / "reports" / "stages")
         except Exception as exc:  # report and carry on with the next resume
             errors += 1
-            print(f"{rid} ERROR {type(exc).__name__}")
+            print("test_frozen: one resume failed" if quiet else f"{rid} ERROR {type(exc).__name__}")
+            continue
+        if quiet:
+            frozen_done += 1
             continue
         stopped = f" stopped_at=stage{record.stopped_at}" if record.stopped_at is not None else ""
         print(f"{rid} {record.sidecar['decision']} flags={len(record.flags)}{stopped}")
+    if frozen_done:
+        print(f"test_frozen: {frozen_done} processed (not shown per resume)")
 
     index = write_index(out_dir)
     summary = write_run_summary(out_dir, root / "reports")
@@ -120,6 +161,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--save-stages",
         action="store_true",
         help="also save stage 1, 3, 4 and 5 output per resume under RESUME_DATA_DIR/reports/stages",
+    )
+    run.add_argument(
+        "--groups",
+        help="comma list of dev, tuned, test_frozen, unlabelled (default dev,tuned; "
+        "test_frozen runs only when named)",
     )
     run.set_defaults(func=cmd_run)
 

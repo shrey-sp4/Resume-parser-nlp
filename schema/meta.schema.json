@@ -108,12 +108,13 @@
     "attempt": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["method", "score", "status", "reasons"],
+      "required": ["method", "score", "status", "reasons", "details"],
       "properties": {
         "method": {"type": "string"},
         "score": {"$ref": "#/$defs/score"},
-        "status": {"enum": ["ACCEPTED", "BELOW_THRESHOLD", "NO_OUTPUT", "NOT_IMPLEMENTED"]},
-        "reasons": {"type": "array", "items": {"$ref": "#/$defs/code"}}
+        "status": {"enum": ["ACCEPTED", "BELOW_THRESHOLD", "NO_OUTPUT", "NOT_IMPLEMENTED", "SKIPPED"]},
+        "reasons": {"type": "array", "items": {"$ref": "#/$defs/code"}},
+        "details": {"type": "object", "additionalProperties": {"type": ["number", "string", "null"]}}
       }
     },
     "unit": {

@@ -223,7 +223,7 @@ def synthetic_ground_truth() -> dict[str, dict]:
             "publications": [
                 _pub("Thin films that do not exist", "journal", "2021", "Invented Physics Letters"),
                 _pub("Phonons in fictional crystals", "journal", "2018", "Journal of Pretend Materials"),
-                _pub("A sample talk title for testing", "conference", "2017",
+                _pub("A sample talk title", "conference", "2017",
                      "Proceedings of the Placeholder Symposium"),
             ],
             "stated_totals": {"journal": None, "conference": None, "total": None},
@@ -283,6 +283,59 @@ def make_mixed_pdf(path: Path) -> Path:
     c = _new_canvas(path, "synthetic mixed page")
     _draw_lines(c, RESUME_A[:8], HEIGHT - MARGIN)
     c.drawImage(ImageReader(_raster(600, 400)), MARGIN, MARGIN, WIDTH - 2 * MARGIN, HEIGHT * 0.4)
+    c.showPage()
+    c.save()
+    return path
+
+
+# ---------------------------------------------------------------- layout and cleaning helpers
+
+HEADER_TEXT = "Curriculum Vitae - Mira Testwood"
+JUSTIFIED_TEXT = (
+    "The research programme studies how invented gene networks respond to made up signals, "
+    "using sparse graphs, careful sampling and a great deal of patience. Each chapter of the "
+    "work explains one small idea in plain words, with examples that anyone can follow."
+)
+TABLE_LIKE_ROW = (("2019 - 2021", 56), ("Research Scientist", 220), ("Imaginary Labs Inc", 400))
+WRAPPED_LINES = (
+    "Research interests include gene regu-",
+    "latory networks and sparse graph",
+    "models for invented data.",
+)
+
+
+def make_multipage_pdf(path: Path, pages: int = 3) -> Path:
+    """A resume over several pages with the same header and a page-number footer on each."""
+    c = _new_canvas(path, f"synthetic {pages}-page resume")
+    bodies = [RESUME_A[:6], RESUME_A[6:11], RESUME_A[11:]]
+    for n in range(1, pages + 1):
+        c.setFont("Helvetica", 8)
+        c.drawString(MARGIN, HEIGHT - 30, HEADER_TEXT)
+        c.drawString(WIDTH / 2 - 20, 25, f"Page {n} of {pages}")
+        _draw_lines(c, bodies[(n - 1) % len(bodies)], HEIGHT - MARGIN - 20)
+        c.showPage()
+    c.save()
+    return path
+
+
+def make_layout_pdf(path: Path) -> Path:
+    """One page with a justified paragraph, a table-like row and a hyphen-wrapped paragraph."""
+    from reportlab.lib.enums import TA_JUSTIFY
+    from reportlab.lib.styles import ParagraphStyle
+
+    c = _new_canvas(path, "synthetic layout page")
+    style = ParagraphStyle("justified", fontName="Helvetica", fontSize=10, leading=13, alignment=TA_JUSTIFY)
+    para = Paragraph(JUSTIFIED_TEXT, style)
+    _w, h = para.wrapOn(c, 300, 200)
+    para.drawOn(c, MARGIN, HEIGHT - MARGIN - h)
+    y = HEIGHT - MARGIN - h - 40
+    c.setFont("Helvetica", 10)
+    for text, x in TABLE_LIKE_ROW:
+        c.drawString(x, y, text)
+    y -= 40
+    for text in WRAPPED_LINES:
+        c.drawString(MARGIN, y, text)
+        y -= 12
     c.showPage()
     c.save()
     return path

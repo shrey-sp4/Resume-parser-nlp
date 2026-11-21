@@ -53,17 +53,24 @@ def test_stage5_chooses_per_section(synthetic_pdfs):
     ]
 
 
-def test_stub_flags_match_what_the_methods_return(monkeypatch):
-    """A method marked stub must return not_implemented, and an unmarked one must not."""
-    from resume_parser.extract import ocr_extractor
+def test_stub_flags_match_what_the_methods_return():
+    """Every method marked stub returns not_implemented, and the guard lists exactly those."""
     from resume_parser.pipeline import method_chains, unimplemented_methods
 
-    monkeypatch.setattr(ocr_extractor, "ocr_available", lambda: True)  # test the OCR body itself
     listed = []
     for stage, chain in method_chains().items():
         for method in chain:
-            assert method.fn(None).implemented is (not method.stub), f"{stage}: {method.name}"
             if method.stub:
+                assert method.fn(None).implemented is False, f"{stage}: {method.name}"
                 listed.append(f"{stage}: {method.name}")
     assert sorted(listed) == unimplemented_methods()
-    assert "stage1: ocr_tesseract" in listed and "stage5.personal: top_lines" in listed
+    assert "stage5.personal: top_lines" in listed
+
+
+def test_stages_0_to_2_have_no_stubs_left():
+    """Stages 0-2 run for real: no stub method, and OCR is optional, not a stub."""
+    from resume_parser.pipeline import method_chains, optional_methods, unimplemented_methods
+
+    assert not [m for m in unimplemented_methods() if m.split(":")[0] in ("stage0", "stage1", "stage2")]
+    assert optional_methods() == ["stage1: ocr_tesseract"]
+    assert all(not m.stub for s in ("stage1", "stage2") for m in method_chains()[s])

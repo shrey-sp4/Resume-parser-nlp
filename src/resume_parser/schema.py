@@ -48,6 +48,7 @@ class AttemptStatus(str, Enum):
     BELOW_THRESHOLD = "BELOW_THRESHOLD"  # gave output, but the score was too low
     NO_OUTPUT = "NO_OUTPUT"  # ran, but gave nothing usable
     NOT_IMPLEMENTED = "NOT_IMPLEMENTED"  # stub, never chosen
+    SKIPPED = "SKIPPED"  # not run, because its run_if condition was false
 
 
 def worst(statuses: list[Status]) -> Status:
@@ -88,12 +89,18 @@ class Method:
     code (used for last-resort methods such as whole_section_one_entry).
     stub: True while the method is not built yet. The cli "run" command refuses
     to run while any stub is left, unless --allow-stubs is given.
+    optional: the method needs an optional dependency (OCR). It is not a stub and
+    does not block a run; when the dependency is missing it reports why.
+    run_if: if set, the method only runs when run_if(attempts so far) is true;
+    otherwise it is recorded as SKIPPED.
     """
 
     name: str
     fn: Callable[[Any], MethodOutput]
     warn_code: str | None = None
     stub: bool = False
+    optional: bool = False
+    run_if: Callable[[list], bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +113,7 @@ class Unit:
     accept_threshold: float | None = None  # None means: use the stage's threshold
     require_output: bool = False  # FAIL this unit if no method gives output
     section: str | None = None  # section used when reasons become flags
+    check: Callable[[Any], Any] | None = None  # None means: use the stage's check
 
 
 @dataclass(frozen=True)
@@ -114,6 +122,7 @@ class Attempt:
     score: float | None
     status: AttemptStatus
     reasons: tuple[Reason, ...] = ()
+    details: tuple[tuple[str, Any], ...] = ()  # the separate check values behind the score
 
     def to_dict(self) -> dict:
         return {
@@ -121,6 +130,7 @@ class Attempt:
             "score": self.score,
             "status": self.status.value,
             "reasons": [r.code for r in self.reasons],
+            "details": dict(sorted(self.details)),
         }
 
 
@@ -150,6 +160,9 @@ class StageResult:
     method_used: str | None = None  # "per_unit" when the choice is made per unit
     methods_tried: list[Attempt] = field(default_factory=list)
     per_unit: dict[str, UnitChoice] = field(default_factory=dict)
+    # Output of every method that ran, per unit. It may hold resume text, so it never
+    # goes into the sidecar; only --save-stages writes it, inside the data folder.
+    extra: dict = field(default_factory=dict)
 
     def to_report(self) -> dict:
         """The part that goes into the sidecar's stage_report (data is left out)."""

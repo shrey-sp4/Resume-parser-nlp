@@ -27,9 +27,58 @@
     "min_text_chars": 20,
     "low_text_chars_per_page": 200,
     "mixed_image_share": 0.1,
-    "center_strip": [0.45, 0.55],
+    "center_strip": [
+      0.45,
+      0.55
+    ],
     "segment_gap_pt": 15,
     "two_column_max_crossing_share": 0.1,
     "two_column_min_half_share": 0.2
+  },
+  "stage1_extract": {
+    "_comment": "Stage 1 line building. To calibrate on dev. Gaps and tolerances are relative to the font size except the word tolerances (points, as pdfplumber takes them).",
+    "x_tolerance": 3.0,
+    "tight_x_tolerance": 1.5,
+    "wide_x_tolerance": 4.5,
+    "row_tolerance_ratio": 0.5,
+    "segment_gap_ratio": 2.5
+  },
+  "stage1_checks": {
+    "_comment": "Stage 1 page checks. To calibrate on dev. garbled_max and glued_max are shares of characters and words.",
+    "garbled_max": 0.01,
+    "glued_max": 0.05,
+    "glued_min_letters": 25,
+    "glued_ignore": [
+      "PhD",
+      "LaTeX",
+      "MATLAB",
+      "BibTeX",
+      "JavaScript",
+      "TypeScript",
+      "LinkedIn",
+      "ResearchGate",
+      "GitHub",
+      "PubMed",
+      "YouTube",
+      "iPhone",
+      "WordPress",
+      "PowerPoint",
+      "SolidWorks",
+      "AutoCAD",
+      "OpenCV",
+      "PyTorch",
+      "TensorFlow",
+      "SciPy",
+      "NumPy"
+    ]
+  },
+  "stage2_clean": {
+    "_comment": "Stage 2 cleaning. To calibrate on dev.",
+    "header_footer_min_pages": 3,
+    "header_footer_min_page_share": 0.5,
+    "header_footer_band_pt": 5,
+    "header_footer_zone": 0.12,
+    "join_max_gap_ratio": 0.6,
+    "join_left_edge_pt": 2.0
   }
 }

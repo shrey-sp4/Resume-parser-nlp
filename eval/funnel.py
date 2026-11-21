@@ -2,6 +2,8 @@
 
     python eval/funnel.py                dev + tuned (per-item files under reports/funnel/)
     python eval/funnel.py --test-frozen  ALSO test_frozen, aggregates only; ONCE ever
+    python eval/funnel.py --lost-items   list the items lost at S1 (dev + tuned only):
+                                         resume ID, section, index, cause, recoverable_by
 
 Read-only: never runs or changes the parser, never edits ground truth. Needs the stage files
 from "python -m resume_parser.cli run --save-stages" (RESUME_DATA_DIR/reports/stages/<resume_id>/)
@@ -19,6 +21,15 @@ Funnel (each item stops at the FIRST stage it fails):
               (name -> personal); else "wrong section: X" or "in text but in no section"
   S5 entry    a predicted entry matches (evaluator rules, one-to-one, same thresholds)
   S5 fields   every checkable field on the matched pair is correct (evaluator checks)
+Items lost at S1 get one cause, the first that fits:
+  garbled       the page that matches best has more than garbled_max garbled characters
+  glued words   found once all spaces are removed (words glued together or split apart)
+  table cell    every word is there, and all of them are in table-cell lines
+  wrong order   every word is there, but not together (reading order, columns)
+  missing text  some words are not in the stage 1 lines at all
+  other         anything else (for example a near match: a GT typo or a paraphrase)
+and "recoverable_by": the stage 1 methods whose own lines do contain it (stage1_methods.json).
+
 Completeness (matched items, separate from the funnel): is the prediction a TRUNCATED version
 of the GT string? If so, where was it cut: not whole in the stage 1 lines (S1), whole in the
 lines but not in the section (S4), or whole in the section but cut in the entry (S5).
@@ -32,7 +43,7 @@ school-level entry; table header or skills line; non-paper publication; duplicat
 already-matched GT item; wrapped-line fragment; bleed from another section; other. The rules
 are defined once below (from category definitions, not fitted per resume) and are heuristics.
 
-Privacy: console output shows counts only. Per-item and false-positive files are keyed by the
+Privacy: console output shows counts only; --lost-items shows resume IDs, never text. Per-item and false-positive files are keyed by the
 salted eval ID and hold no resume text. test_frozen: aggregates only, nothing per item.
 """
 
@@ -53,7 +64,8 @@ import common  # noqa: E402
 import evaluate as ev  # noqa: E402
 from common import EvalError  # noqa: E402
 
-from resume_parser.schema import DataDirError, read_json, resume_id_for  # noqa: E402
+from resume_parser.extract.lines import garbled_rate  # noqa: E402
+from resume_parser.schema import DataDirError, load_thresholds, read_json, resume_id_for  # noqa: E402
 
 TOOL = "funnel"
 STAGE_FILES = {
@@ -62,6 +74,8 @@ STAGE_FILES = {
     "stage4": "stage4_canonical.json",
     "stage5": "stage5_entities.json",
 }
+METHODS_FILE = "stage1_methods.json"
+S1_CAUSES = ("garbled", "glued words", "table cell", "wrong order", "missing text", "other")
 
 FOUND_LO, FOUND_HI = 85.0, 95.0
 SECTIONS = ("name", "education", "experience", "publications")
@@ -118,9 +132,17 @@ def load_stages(stem: str) -> dict:
     folder = common.stages_dir() / resume_id_for(stem)
     rec = {s: read_json(folder / n) if (folder / n).is_file() else None for s, n in STAGE_FILES.items()}
     pages: dict[str, str] = {}
+    table_words: set[str] = set()
     data1 = (rec["stage1"] or {}).get("data") or {}
     for page_id in sorted(data1):
-        pages[page_id] = _line_text((data1[page_id] or {}).get("lines"))
+        lines = (data1[page_id] or {}).get("lines") or []
+        pages[page_id] = _line_text(lines)
+        table_words |= set(snorm(_line_text([x for x in lines if x.get("in_table")])).split())
+    by_method: dict[str, list[str]] = defaultdict(list)
+    methods_rec = read_json(folder / METHODS_FILE) if (folder / METHODS_FILE).is_file() else {}
+    for page_id in sorted(methods_rec.get("methods") or {}):
+        for method, data in sorted((methods_rec["methods"][page_id] or {}).items()):
+            by_method[method].append(_line_text((data or {}).get("lines")))
     sections: dict[str, list[str]] = defaultdict(list)
     data4 = (rec["stage4"] or {}).get("data") or {}
     for sec in data4.get("sections") or []:
@@ -130,8 +152,11 @@ def load_stages(stem: str) -> dict:
     return {
         "records": rec,
         "complete": rec["stage1"] is not None and rec["stage4"] is not None,
+        "pages_raw": pages,
         "pages_n": {p: snorm(t) for p, t in pages.items()},
         "text_n": snorm("\n".join(pages.values())),
+        "table_words": table_words,
+        "methods_n": {m: snorm("\n".join(v)) for m, v in sorted(by_method.items())},
         "secs_n": {k: snorm("\n".join(v)) for k, v in sorted(sections.items())},
     }
 
@@ -157,6 +182,31 @@ def method_for(sec: str, lost_at: str, fields_n: list, st: dict) -> str | None:
     if lost_at in ("S5 entry", "S5 fields"):
         return f"stage5 {_method(rec['stage5'], STAGE5_UNIT[sec])}"
     return None
+
+
+# ---- S1 loss causes ----------------------------------------------------------------------
+
+
+def _garbled_max() -> float:
+    return float(load_thresholds()["stage1_checks"]["garbled_max"])
+
+
+def s1_cause(fields_n: list, st: dict) -> str:
+    """Why an item is not in the stage 1 lines (the categories in the module docstring)."""
+    scores = {p: find_all(fields_n, t) or 0.0 for p, t in st["pages_n"].items()}
+    if scores:
+        best = max(scores, key=lambda p: (scores[p], -list(scores).index(p)))
+        if garbled_rate(st["pages_raw"][best]) > _garbled_max():
+            return "garbled"
+    squashed = st["text_n"].replace(" ", "")
+    if squashed and all((find(f.replace(" ", ""), squashed) or 0.0) >= FOUND_LO for f in fields_n):
+        return "glued words"
+    words = set(st["text_n"].split())
+    needed = {w for f in fields_n for w in f.split()}
+    if needed <= words:
+        return "table cell" if needed <= st["table_words"] else "wrong order"
+    s1 = find_all(fields_n, st["text_n"])
+    return "other" if s1 is not None and s1 >= 75 else "missing text"
 
 
 # ---- completeness ---------------------------------------------------------------------
@@ -281,17 +331,12 @@ def diagnose_resume(gt: dict, pred: dict | None, st: dict, eid: str):
         tgt = max((sec_scores.get(k, 0.0) for k in TARGET[sec]), default=0.0)
         it["best_section"], it["best_section_score"], it["target_score"] = best, sec_scores.get(best), tgt
         it["matched"], it["field_bad"] = matched_pred is not None, field_bad
+        it["recoverable_by"] = []
         if not it["s1_ge85"]:
             it["lost_at"] = "S1 text"
             it["gt_typo_band"] = s1 is not None and s1 >= 75
-            text_toks = set(text_n.split())
-            if all(set(f.split()) <= text_toks for f in fn):
-                # every word is there, but not together: reading order or table cells interleaved
-                it["cause"] = "words present, reading order broken"
-            elif it["gt_typo_band"]:
-                it["cause"] = "near match only (GT typo or paraphrase?)"
-            else:
-                it["cause"] = "not in the stage 1 lines"
+            it["cause"] = s1_cause(fn, st)
+            it["recoverable_by"] = [m for m, t in st["methods_n"].items() if (find_all(fn, t) or 0.0) >= FOUND_LO]
         elif tgt < FOUND_LO:
             it["lost_at"] = "S4 section"
             it["cause"] = (f"wrong section: {best}" if best and sec_scores[best] >= FOUND_LO
@@ -357,6 +402,7 @@ def funnel(items: list, sec: str):
         kept -= lost[st]
         rows.append(kept)
     extra = {"s1_ge95": sum(i["s1_ge95"] for i in xs),
+             "s1_recoverable": sum(i["lost_at"] == "S1 text" and bool(i["recoverable_by"]) for i in xs),
              "matched_despite_earlier_loss": sum(i["matched_despite_earlier_loss"] for i in xs),
              "truncated": sum(i["completeness"] == "truncated" for i in xs),
              "matched": sum(i["matched"] for i in xs),
@@ -383,6 +429,7 @@ def print_funnels(results: dict) -> None:
                 cells.append(f"{rows[k]:>6} {pct(rows[k], rows[0])} {pct(rows[k], prev)}")
             print(f"  {st:<26}" + "".join(f"{c:>26}" for c in cells))
         for key, label in (("s1_ge95", "  (S1 at >=95)"),
+                           ("s1_recoverable", "  S1 lost, other method has it"),
                            ("matched_despite_earlier_loss", "  matched despite S1/S4 miss"),
                            ("truncated", "  truncated among matched")):
             cells = []
@@ -439,9 +486,23 @@ def _jsonl(rows: list[dict]) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="python eval/funnel.py", description=__doc__.splitlines()[0])
-    ap.add_argument("--test-frozen", action="store_true",
-                    help="also test_frozen, aggregates only; allowed once, logged")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--test-frozen", action="store_true",
+                      help="also test_frozen, aggregates only; allowed once, logged")
+    mode.add_argument("--lost-items", action="store_true",
+                      help="list items lost at S1 for dev and tuned (resume IDs only)")
     return ap
+
+
+def print_lost_items(results: dict, ids: dict) -> None:
+    """One row per item lost at S1: resume ID, section, index, cause, recoverable_by."""
+    rid_of = {v["eval_id"]: v["resume_id"] for v in ids.values()}
+    print(f"{'resume_id':<12}{'section':<14}{'index':>6}  {'cause':<14}recoverable_by")
+    for g in ("dev", "tuned"):
+        rows = sorted((rid_of[i["eval_id"]], i["section"], i["idx"], i["cause"], i["recoverable_by"])
+                      for i in results[g]["items"] if i["lost_at"] == "S1 text")
+        for rid, sec, idx, cause, rec in rows:
+            print(f"{rid:<12}{sec:<14}{idx:>6}  {cause:<14}{','.join(rec) or '-'}")
 
 
 def run(a: argparse.Namespace) -> int:
@@ -468,6 +529,9 @@ def run(a: argparse.Namespace) -> int:
             common.write_text_inside(out / f"items_{g}.jsonl", _jsonl(items))
             common.write_text_inside(out / f"fps_{g}.jsonl", _jsonl(fps))
 
+    if a.lost_items:
+        print_lost_items(results, ids)
+        return 0
     print("=== FUNNEL: where GT items are lost (first failing stage) ===")
     for g, r in results.items():
         note = "  (aggregates only)" if g == "test_frozen" else ""
@@ -476,6 +540,12 @@ def run(a: argparse.Namespace) -> int:
             print(f"    {r['incomplete']} resume(s) have no stage 1 or stage 4 file; "
                   "run 'python -m resume_parser.cli run --save-stages' first")
     print_funnels(results)
+    print("\n=== ITEMS LOST AT S1, BY CAUSE ===")
+    print(f"  {'cause':<16}" + "".join(f"{g:>12}" for g in results))
+    for cause in S1_CAUSES:
+        cnt = {g: sum(1 for i in r["items"] if i["lost_at"] == "S1 text" and i["cause"] == cause)
+               for g, r in results.items()}
+        print(f"  {cause:<16}" + "".join(f"{cnt[g]:>12}" for g in results))
     print("\n=== LARGEST LOSS POINTS (ranked by dev + tuned) ===")
     print(f"  {'#':>3} {'section':<13}{'stage':<12}{'cause':<52}" + "".join(f"{g:>12}" for g in results))
     for k, ((sec, st, cause), cnt) in enumerate(loss_points(results)[:15], 1):

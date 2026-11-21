@@ -87,3 +87,49 @@ def test_run_without_flag_works_once_no_stubs_are_left(data_dir, monkeypatch, ca
     synth.build_all(data_dir / "pdfs")
     assert main(["run"]) == 0
     assert (data_dir / "outputs" / "run_index.json").is_file()
+
+
+# ---------------------------------------------------------------- saved stage files
+
+STAGE_FILE_NAMES = ["stage1_lines.json", "stage3_sections.json", "stage4_canonical.json", "stage5_entities.json"]
+
+
+def _files_outside(tmp_path, data_dir) -> set:
+    return {p for p in tmp_path.rglob("*") if p.is_file() and data_dir not in p.parents}
+
+
+def test_save_stages_writes_four_files_inside_the_data_folder_only(data_dir, tmp_path, capsys):
+    import make_synthetic_resumes as synth
+
+    synth.build_all(data_dir / "pdfs")
+    before = _files_outside(tmp_path, data_dir)
+    assert main(["run", "--allow-stubs", "--save-stages"]) == 0
+    assert _files_outside(tmp_path, data_dir) == before
+
+    stages = data_dir / "reports" / "stages"
+    rid = resume_id_for("synthetic_a_simple.pdf")
+    assert sorted(p.name for p in (stages / rid).iterdir()) == STAGE_FILE_NAMES
+    assert sorted(p.name for p in stages.iterdir()) == sorted(
+        resume_id_for(p.name) for p in (data_dir / "pdfs").glob("*.pdf"))
+    record = json.loads((stages / rid / "stage1_lines.json").read_text(encoding="utf-8"))
+    assert record["resume_id"] == rid and record["stage"] == "stage1"
+    assert set(record) == {"schema_version", "resume_id", "stage", "status", "method_used", "per_unit", "data"}
+
+
+def test_save_stages_removes_stale_files(data_dir, capsys):
+    import make_synthetic_resumes as synth
+
+    pdf = synth.make_image_only_pdf(data_dir / "pdfs" / "scan.pdf")  # stops at stage 1
+    stale = data_dir / "reports" / "stages" / resume_id_for(pdf.name) / "stage4_canonical.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("{}", encoding="utf-8")
+    assert main(["run", "--allow-stubs", "--save-stages"]) == 0
+    assert sorted(p.name for p in stale.parent.iterdir()) == ["stage1_lines.json"]
+
+
+def test_no_stage_files_without_the_flag(data_dir, capsys):
+    import make_synthetic_resumes as synth
+
+    synth.build_all(data_dir / "pdfs")
+    assert main(["run", "--allow-stubs"]) == 0
+    assert not (data_dir / "reports" / "stages").exists()

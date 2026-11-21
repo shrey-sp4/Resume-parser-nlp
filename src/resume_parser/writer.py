@@ -4,6 +4,8 @@ Per resume, under RESUME_DATA_DIR/outputs/:
 - <name>.json       main output, GT v2 format, keys in the order of design 5.1
 - <name>.meta.json  sidecar, sorted keys
 and once per run: run_index.json (sorted keys, resumes sorted by file name).
+With cli run --save-stages, also the stage files under RESUME_DATA_DIR/reports/stages/
+<resume_id>/ (they hold resume text, so they never leave the data folder).
 
 Every file is checked against its schema before it is written. Files are
 UTF-8 with "\n" line endings, so output is byte-identical on every OS.
@@ -202,3 +204,53 @@ def write_index(out_dir: Path) -> dict:
     index = _checked(build_index(out_dir), "run_index.schema.json")
     _write(out_dir / INDEX_FILE, dump_json(index, sort_keys=True))
     return index
+
+
+# ---------------------------------------------------------------- saved stage files
+
+# stage -> file name under RESUME_DATA_DIR/reports/stages/<resume_id>/
+STAGE_FILES = {
+    "stage1": "stage1_lines.json",
+    "stage3": "stage3_sections.json",
+    "stage4": "stage4_canonical.json",
+    "stage5": "stage5_entities.json",
+}
+
+
+def build_stage_file(record: PipelineRecord, stage: str) -> dict:
+    """One saved stage: its status, the method choices and the data passed forward.
+
+    The data holds resume text, so these files are only ever written inside the data folder.
+    """
+    result = record.results[stage]
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "resume_id": record.resume_id,
+        "stage": stage,
+        "status": result.status.value,
+        "method_used": result.method_used,
+        "per_unit": {
+            unit: {"method_used": choice.method_used, "status": choice.status.value}
+            for unit, choice in result.per_unit.items()
+        },
+        "data": result.data,
+    }
+
+
+def write_stage_files(record: PipelineRecord, stages_dir: Path) -> list[Path]:
+    """Write the saved stage files of one resume (cli run --save-stages).
+
+    Files from an earlier run are removed first, so a resume that now stops earlier leaves
+    no stale stage files behind. A stage that did not run gets no file.
+    """
+    folder = require_inside_data_root(Path(stages_dir) / record.resume_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in STAGE_FILES.values():
+        (folder / name).unlink(missing_ok=True)
+    written = []
+    for stage, name in STAGE_FILES.items():
+        if stage in record.results:
+            path = folder / name
+            _write(path, dump_json(build_stage_file(record, stage), sort_keys=True))
+            written.append(path)
+    return written

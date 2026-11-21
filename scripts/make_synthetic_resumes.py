@@ -7,7 +7,8 @@ Builds three resumes:
   synthetic_b_table.pdf     education given as a ruled table
   synthetic_c_variants.pdf  different heading wording and bullet styles
 
-Also has helpers for page-profile tests: a text-only page, an image-only page
+Also gives ground truth (GT v2) for the three resumes, for the evaluator tests, and has
+helpers for page-profile tests: a text-only page, an image-only page
 (a drawn raster, no text) and a mixed page.
 
 PDFs are built with reportlab's invariant mode, so the same input gives the
@@ -166,6 +167,88 @@ def build_all(out_dir: str | Path) -> list[Path]:
         make_with_table(out_dir / "synthetic_b_table.pdf"),
         make_variants(out_dir / "synthetic_c_variants.pdf"),
     ]
+
+
+# ---------------------------------------------------------------- ground truth
+
+
+def _edu(degree, level, stream, institution):
+    return {"degree": degree, "degree_level": level, "stream": stream, "institution": institution}
+
+
+def _exp(title, institution, dates, kind):
+    return {"job_title": title, "institution": institution, "dates": dates, "experience_type": kind}
+
+
+def _pub(title, kind, year, venue):
+    return {"title": title, "type": kind, "year": year, "venue": venue}
+
+
+def synthetic_ground_truth() -> dict[str, dict]:
+    """GT v2 files for the three fake resumes, keyed by file stem. Every field is filled."""
+    return {
+        "synthetic_a_simple": {
+            "resume_file": "synthetic_a_simple.pdf",
+            "candidate_name": "Mira Testwood",
+            "education": [
+                _edu("Ph.D.", "doctorate", "Computational Biology", "Northfield Institute of Science"),
+                _edu("M.Sc.", "masters", "Applied Mathematics", "Lakeside University"),
+                _edu("B.Sc.", "bachelors", "Mathematics", "Riverbend College"),
+            ],
+            "experience": [
+                _exp("Assistant Professor", "Hillcrest University", "Jul 2023 - Present", "academic"),
+                _exp("Postdoctoral Fellow", "Northfield Institute of Science", "Aug 2021 - Jun 2023", "academic"),
+                _exp("Data Analyst", "Examplecorp Analytics Pvt Ltd", "Jan 2014 - Jun 2014", "industry"),
+            ],
+            "publications": [
+                _pub("Modelling gene networks with sparse graphs", "journal", "2022", "Journal of Invented Biology"),
+                _pub("Fast alignment of made-up sequences", "conference", "2020",
+                     "Proc. Imaginary Conference on Bioinformatics"),
+            ],
+            "stated_totals": {"journal": None, "conference": None, "total": 2},
+            "notes": "",
+        },
+        "synthetic_b_table": {
+            "resume_file": "synthetic_b_table.pdf",
+            "candidate_name": "Jonas Fakely",
+            "education": [
+                _edu("Ph.D.", "doctorate", "Physics", "Westbrook University"),
+                _edu("M.Tech.", "masters", "Materials Science", "Eastvale Institute of Technology"),
+                _edu("B.Tech.", "bachelors", "Engineering Physics", "Southgate College of Engineering"),
+            ],
+            "experience": [
+                _exp("Associate Professor", "Westbrook University", "2021 - present", "academic"),
+                _exp("Research Scientist", "Imaginary Labs Inc", "2019 - 2021", "industry"),
+            ],
+            "publications": [
+                _pub("Thin films that do not exist", "journal", "2021", "Invented Physics Letters"),
+                _pub("Phonons in fictional crystals", "journal", "2018", "Journal of Pretend Materials"),
+                _pub("A sample talk title for testing", "conference", "2017",
+                     "Proceedings of the Placeholder Symposium"),
+            ],
+            "stated_totals": {"journal": None, "conference": None, "total": None},
+            "notes": "",
+        },
+        "synthetic_c_variants": {
+            "resume_file": "synthetic_c_variants.pdf",
+            "candidate_name": "Lena Samplestone",
+            "education": [
+                _edu("Doctor of Philosophy", "doctorate", "Economics", "Greenhill University"),
+                _edu("Master of Arts", "masters", "Economics", "Greenhill University"),
+                _edu("Bachelor of Arts (Honours)", "bachelors", "Arts", "Stonebridge College"),
+            ],
+            "experience": [
+                _exp("Professor", "Maplewood University", "2020 – till date", "academic"),
+                _exp("Lecturer", "Maplewood University", "2015 – 2020", "academic"),
+            ],
+            "publications": [
+                _pub("Prices in an invented market", "journal", "2021", "Review of Fictional Economics"),
+                _pub("Trade between imaginary towns", "journal", "2019", "Placeholder Economic Journal"),
+            ],
+            "stated_totals": {"journal": None, "conference": None, "total": None},
+            "notes": "",
+        },
+    }
 
 
 # ---------------------------------------------------------------- page-profile helpers

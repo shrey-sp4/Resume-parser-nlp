@@ -2,7 +2,8 @@
 
     python -m resume_parser.cli run [PDF]     process RESUME_DATA_DIR/pdfs (or one file);
                                               refuses while stub methods are left,
-                                              unless --allow-stubs is given
+                                              unless --allow-stubs is given;
+                                              --save-stages keeps stage output for eval/funnel.py
     python -m resume_parser.cli validate-gt   check RESUME_DATA_DIR/ground_truth_v2/*.json
 
 Output shows resume IDs only, never names, emails or phone numbers.
@@ -26,7 +27,7 @@ def _pdfs_in(folder: Path) -> list[Path]:
 def cmd_run(args: argparse.Namespace) -> int:
     from resume_parser.pipeline import run_pipeline, unimplemented_methods
     from resume_parser.report import write_run_summary
-    from resume_parser.writer import write_index, write_resume
+    from resume_parser.writer import write_index, write_resume, write_stage_files
 
     # Stub methods pass their pages and sections as OK "not_implemented", so a run
     # with stubs left gives outputs that look fine but hold nothing. Refuse by default.
@@ -59,6 +60,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         try:
             record = run_pipeline(pdf)
             write_resume(record, out_dir)
+            if args.save_stages:
+                write_stage_files(record, root / "reports" / "stages")
         except Exception as exc:  # report and carry on with the next resume
             errors += 1
             print(f"{rid} ERROR {type(exc).__name__}")
@@ -112,6 +115,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-stubs",
         action="store_true",
         help="run even though some methods are not built yet (for testing only)",
+    )
+    run.add_argument(
+        "--save-stages",
+        action="store_true",
+        help="also save stage 1, 3, 4 and 5 output per resume under RESUME_DATA_DIR/reports/stages",
     )
     run.set_defaults(func=cmd_run)
 

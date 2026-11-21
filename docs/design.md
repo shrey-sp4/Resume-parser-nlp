@@ -237,6 +237,8 @@ stored in the sidecar file.
   sidecar is written, with a FAIL flag `main_json_invalid`.
 - Every file is checked against its schema before it is written.
 - No timestamps, no absolute paths. Keys and lists in a fixed order.
+- With `--save-stages`, the output of stages 1, 3, 4 and 5 is also saved per resume, for the
+  funnel (section 6).
 
 ## 5. Output format
 
@@ -336,19 +338,88 @@ Resume IDs only, sorted keys:
 
 ## 6. Evaluation (offline, uses ground truth)
 
-The method is a stage-by-stage loss funnel. For every ground-truth item, find the first stage where
-it is lost:
+Two tools in `eval/`, both read-only. They never run the parser and never edit ground truth.
+They read from and write to `RESUME_DATA_DIR` only. Console output shows resume IDs and counts,
+never names.
 
-| Stage | Question | Score |
+**Groups.** `ground_truth_v2/_split.json` lists **dev** (15, used for building) and
+**test_frozen** (15, scored once at the end, aggregates only). **tuned** is every other GT
+file (the first 10). Entries in the split may be stems or file names.
+
+**IDs.** Console tables show the pipeline's `resume_id`. Files written by `eval/` (`--json`
+results, funnel item files) use a salted `eval_id` = `"e_"` + sha256(salt + stem)[:8]. The
+salt is in `private/salt.txt`, and `private/id_map.json` maps each `resume_id` to its
+`eval_id` and file name. `private/` never leaves the data folder.
+
+**`eval/evaluate.py`**: scores `outputs/<stem>.json` against `ground_truth_v2/<stem>.json`. Both
+are in the same format (5.1), so they are read with the same code. A missing prediction (for
+example, a resume that stopped at stage 1) is scored as empty.
+- Entry matching is one-to-one (assignment over above-threshold scores). Thresholds:
+  education 70, experience 70, publications 85.
+  - Education pair score = min(degree+stream, institution). Different degree levels never match.
+  - Experience pair score = min(job title, institution).
+  - Publications = partial ratio of the titles (full ratio for GT titles under 15 characters).
+  - An empty GT component is left out of the pair score.
+- Field checks on matched pairs: name (exact) and name without honorifics, case or
+  punctuation; education and experience institution (normalised exact; the GT may add a
+  location); experience dates (exact as printed); publication year (exact as printed), venue
+  (partial ratio >= 85) and type.
+- Further rows are reported separately, so the rows above stay comparable with earlier runs:
+  degree_level, stream, job title and experience_type.
+- Empty GT fields are skipped and counted. "Predicted although GT is empty" is reported, never
+  scored. Predicted publication counts are compared with GT `stated_totals`.
+- 95% percentile bootstrap CIs over resumes (10,000 samples, fixed seed 0).
+- Per-resume rows are shown only for dev and tuned.
+
+**`eval/funnel.py`**: for every GT item, finds the first stage where it is lost. It reads the
+stage files saved by `cli run --save-stages` (below) and the predictions, and uses the
+evaluator's matching and field checks.
+
+| Step | Question | Score |
 |---|---|---|
-| 1 | Is the GT text found, complete, in the extracted lines? | Stage 1 recall |
-| 3-4 | Is it in the right (canonical) section? | Routing recall |
-| 5 | Is there a matching entry with correct fields? | Entry F1, field accuracy |
-| Completeness | Is the entry truncated? | Truncation rate |
+| S1 text | Are the item's key fields found in the stage 1 lines (fuzzy >= 85; >= 95 also shown)? | Stage 1 recall |
+| S4 section | Are they in the right canonical section of the stage 4 document (name -> personal)? | Routing recall |
+| S5 entry | Is there a matching predicted entry? | Entry recall |
+| S5 fields | Is every checkable field correct? | Field accuracy |
+| Completeness | Is a matched entry truncated, and where was it cut (S1, S4 or S5)? | Truncation rate |
 
-Also report false positives by cause. Use one-to-one fuzzy matching, bootstrap confidence
-intervals, and a fixed random seed. Ground truth is split into: **tuned** (first 10), **dev**
-(15, used for building), **test_frozen** (15, scored once at the end, aggregates only).
+- Each lost item is also given the method that handled it:
+  - the stage 1 method of the page that matches it best
+  - the stage 3 and stage 4 methods
+  - or the stage 5 method of its section
+- False positives get the first matching cause, from a fixed list: school-level entry, table
+  header or skills line, non-paper publication, duplicate, wrapped-line fragment, bleed from
+  another section, other.
+- Tables are per section, with dev and tuned side by side.
+- Per-item and false-positive files (`reports/funnel/`, no resume text) are written for dev and
+  tuned only.
+- Two parts of the old diagnostic are not carried over:
+  - recovery by a second extractor, because stage 1 already tries other methods per page
+  - the input-properties table, because stage 0 page profiles are in the sidecar and the run
+    summary
+
+**Saved stage files** (`cli run --save-stages`): `reports/stages/<resume_id>/stage1_lines.json`,
+`stage3_sections.json`, `stage4_canonical.json` and `stage5_entities.json`.
+- Each holds `{schema_version, resume_id, stage, status, method_used, per_unit, data}`.
+- `data` is what the stage passes forward:
+  - stage 1: `{page_id: {"lines": [{"text", ...}]}}`
+  - stage 3: `{"blocks": [{"heading_raw", "lines"}]}`
+  - stage 4: the Canonical Document (section 4)
+  - stage 5: the per-unit data
+- They hold resume text, so they are written only inside the data folder. Files from an earlier
+  run are removed first.
+
+**test_frozen guard.** Neither tool touches test_frozen unless it is given `--test-frozen`.
+- Before scoring, a run appends one line to `reports/test_frozen_runs.log`:
+  - tool name
+  - run counter (that tool's earlier lines plus one; it needs no git)
+  - UTC time
+  - sha256 of the script and of `eval/common.py`
+  - sha256 of the evaluation settings and of `config/thresholds.json`
+  - the reason
+- A second run of `evaluate.py` is refused unless `--allow-rerun "<reason>"` is given.
+- `funnel.py` runs on test_frozen once only, with no override.
+- test_frozen results are aggregates only.
 
 ## 7. Choosing thresholds
 
@@ -377,7 +448,7 @@ resume-parser/
      clean.py  sections.py  normalize.py        (normalize.py builds the Canonical Document)
      entities/ personal.py  education.py  experience.py  publications.py
      field_norm.py  validate.py  scoring.py  writer.py   (writer.py writes main JSON + sidecar + index)
-  eval/     evaluate.py  funnel.py  calibrate_thresholds.py
+  eval/     common.py  evaluate.py  funnel.py  calibrate_thresholds.py   (common.py: groups, IDs, test_frozen guard)
   fixtures/ synthetic/   (fake resumes, built by a script)
   tests/    one test file per stage, plus determinism
   scripts/  check_no_data.py  make_synthetic_resumes.py
@@ -387,7 +458,8 @@ resume-parser/
 ## 9. Data (never in the repo)
 
 - A folder on each person's computer, set by environment variable `RESUME_DATA_DIR`:
-  `pdfs/`, `ground_truth_v2/`, `outputs/`, `review_queue/`, `reports/`.
+  `pdfs/`, `ground_truth_v2/` (with `_split.json`), `outputs/`, `review_queue/`, `reports/`
+  (with `stages/`, `funnel/` and `test_frozen_runs.log`), `private/` (salt and ID map).
 - Back it up somewhere private. Git will not have a copy.
 - Guards: `.gitignore`, a pre-commit hook and a CI check (`scripts/check_no_data.py`) that
   refuse PDFs, JSON outside `config/`, `schema/`, `fixtures/` and `docs/`, any file larger than

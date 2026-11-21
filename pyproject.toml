@@ -30,5 +30,5 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# src for the package, scripts for the guard and the fake resume builder
-pythonpath = ["src", "scripts"]
+# src for the package, scripts for the guard and the fake resume builder, eval for the evaluator
+pythonpath = ["src", "scripts", "eval"]

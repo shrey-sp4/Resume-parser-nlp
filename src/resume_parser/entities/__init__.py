@@ -8,7 +8,8 @@ Units, in this order: personal, education, experience, publications.
   (entities/education.py).
 - experience: date_anchor_split, table_row_split, paragraph_split, whole_section_one_entry
   (entities/experience.py).
-- publications: the same split method names as education, still stubs.
+- publications: marker_split, hanging_indent_split, paragraph_split, whole_section_one_entry
+  (entities/publications.py).
 
 What each unit returns as data (this is what writer.build_main and build_sidecar read):
 - personal:      {"candidate_name": str, "personal_extra": {...}, "name_source": {page, lines}}
@@ -16,7 +17,8 @@ What each unit returns as data (this is what writer.build_main and build_sidecar
                   "excluded": [school-level entries], ...}
 - experience:    {"entries": [main-format experience entries], "sides": [provenance per entry],
                   "parsed_dates": [{"start", "end"} per entry], ...}
-- publications:  {"entries": [...], "stated_totals": {"journal", "conference", "total"}}
+- publications:  {"entries": [main-format publication entries], "sides": [provenance per entry],
+                  "stated_totals": {"journal", "conference", "total"}, ...}
 """
 
 from __future__ import annotations
@@ -25,53 +27,13 @@ from pathlib import Path
 
 from resume_parser.entities import education as edu
 from resume_parser.entities import experience as exp
+from resume_parser.entities import publications as pub
 from resume_parser.entities.personal import NAME_METHODS, check_personal, personal_payload
 from resume_parser.pipeline import run_with_fallbacks
-from resume_parser.schema import (
-    TARGET_SECTIONS,
-    Context,
-    Method,
-    MethodOutput,
-    StageResult,
-    Unit,
-    not_implemented,
-)
+from resume_parser.schema import TARGET_SECTIONS, Context, StageResult, Unit
 
-
-def anchor_split(payload) -> MethodOutput:
-    """Split on anchors: degree words, date ranges, numbering, years."""
-    return not_implemented()
-
-
-def table_row_split(payload) -> MethodOutput:
-    """One entry per table row."""
-    return not_implemented()
-
-
-def paragraph_split(payload) -> MethodOutput:
-    """Split on blank lines."""
-    return not_implemented()
-
-
-def whole_section_one_entry(payload) -> MethodOutput:
-    """Last resort: the whole section as one entry."""
-    return not_implemented()
-
-
-SPLIT_METHODS = (
-    Method("anchor_split", anchor_split, stub=True),
-    Method("table_row_split", table_row_split, stub=True),
-    Method("paragraph_split", paragraph_split, stub=True),
-    Method("whole_section_one_entry", whole_section_one_entry, warn_code="whole_section_one_entry", stub=True),
-)
-
-
-def check_entries(data) -> float:
-    """Coverage and per-section entry checks (design section 4, stage 5).
-
-    Placeholder: returns 0.0 until the splitters exist.
-    """
-    return 0.0
+# every section brings its own chain; this one is only the stage-level default
+SPLIT_METHODS = pub.SPLIT_METHODS
 
 
 def run_entities(pdf_path: Path, ctx: Context) -> StageResult:
@@ -92,14 +54,14 @@ def run_entities(pdf_path: Path, ctx: Context) -> StageResult:
             payload, methods = exp.experience_payload(document, params, by_content), exp.SPLIT_METHODS
             check = lambda data, p=params: exp.check_experience(data, p)  # noqa: E731
         else:
-            payload = {"section": section, "document": document, "resume_file": ctx.resume_file}
-            methods, check = SPLIT_METHODS, None
+            payload, methods = pub.publications_payload(document, params), pub.SPLIT_METHODS
+            check = lambda data, p=params: pub.check_publications(data, p)  # noqa: E731
         units.append(Unit(unit_id=section, payload=payload, methods=methods,
                           accept_threshold=by_section[section], section=section, check=check))
     return run_with_fallbacks(
         "stage5",
         SPLIT_METHODS,
-        check_entries,
+        lambda data, p=params: pub.check_publications(data, p),
         ctx.thresholds["accept_threshold"]["stage5"],
         units=units,
     )

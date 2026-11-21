@@ -100,10 +100,12 @@
     "leak_max": 0.1
   },
   "stage5_entities": {
-    "_comment": "Stage 5 settings. To calibrate on dev. current_year is set here (not read from the clock) so runs are reproducible; update it once a year.",
+    "_comment": "Stage 5 settings. To calibrate on dev. current_year is set here (not read from the clock) so runs are reproducible; update it once a year. max_citation_chars: a publication entry longer than this is taken as several citations run together and fails its check; indent_tolerance_pt: how far right of the left margin a wrapped citation line must start for hanging_indent_split.",
     "name_top_lines": 8,
     "paragraph_gap_ratio": 1.0,
     "current_year": 2026,
-    "year_max_offset": 6
+    "year_max_offset": 6,
+    "max_citation_chars": 800,
+    "indent_tolerance_pt": 3.0
   }
 }

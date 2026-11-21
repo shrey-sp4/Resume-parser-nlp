@@ -316,16 +316,40 @@ with a title or an institution, plausible years, end not before start and no hea
 coverage), 0 when the section has lines but no entry; entries without dates are flagged
 `no_dates`, overlapping ranges are counted, neither is scored.
 
-**Publications.** Split into citations (numbering, year anchors, merge wrapped lines).
-Fields: title, year, venue, type (journal / conference / other; finer types such as book chapter
-are kept in the sidecar) from the heading and venue words. The raw citation goes to the sidecar.
-Remove duplicates. Talks, posters, newspaper articles go to `non_paper_publications` in the
-sidecar. Also read printed totals ("Total: 65") into `stated_totals`.
+**Publications** (built). All publications sections are read in order (talks, posters and
+presentations are already in `other`); a section boundary ends an entry. Short heading lines
+inside a section (Journal Papers, Conference Proceedings, Book Chapters, ...) are sub-headings:
+never entries, they set the type of the entries under them. Lines with a printed total ("Total
+publications: 65", "12 journal papers", "Conference papers: 4") fill `stated_totals` and never
+create entries. Methods: `marker_split` (an entry starts at a number or bullet, after a
+year-only line, or, since stage 2 removes bullet characters, at a line that follows a full stop
+and starts like an author list; other lines are wrapped parts, also across pages),
+`hanging_indent_split` (an entry starts at the left margin of its section and page; indented
+lines are wrapped parts), `paragraph_split`, `whole_section_one_entry` (always WARN). Fields as
+printed: title (quoted text, else the text after the author list up to the end of that sentence
+or the comma before the venue), venue (the first segment after the title with a journal,
+conference or publisher word, else the first that is not volume, pages, year or DOI; when that
+gives nothing, the segment right after the title if it has at most 8 words and is not volume,
+pages, year, DOI or an author list; otherwise empty; a leading
+"In"/"In:" removed, trailing volume and pages cut), year (the last plausible 4-digit year), type
+(sub-heading, then a journal or conference word in the entry's own venue, including J. before an
+abbreviated word, Trans., Proc., Conf., Symp.; then the section heading, which also decides when
+the venue has both kinds of word or only weak words (Proceedings, Review, Letters, Bulletin,
+Annals, Magazine, Congress: `weak_type_words`, used from the venue only without a heading type);
+then other cues such as arXiv, preprint, thesis, patent, book chapter, "in press" with no venue,
+submitted; then conference cues such as "In"/"In:"/"Proc" before the venue, an all-capitals
+acronym venue next to a year, "Int. Conf", "Annual Meeting"; otherwise journal with a venue and
+other without one, recorded as `type_source` "default"). Authors, volume, pages, DOI, links, raw
+text, provenance and `type_source` go to the sidecar. When a field is not clear it stays empty.
+Check: min(share of entries with a title of 3+ words, a plausible year, not a heading or an
+author list alone, not two citations run together and not longer than `max_citation_chars`;
+coverage), 0 when the section has lines but no entry; the count against a printed total is
+reported, never scored. Words live in `config/publications.json`.
 
 **Methods for entry splitting, chosen per section:** `anchor_split`, `table_row_split`,
 `paragraph_split`, then `whole_section_one_entry` (always last, always WARN). Built for
-education and experience (where the first method is `date_anchor_split`); publications is still a
-stub.
+education; experience starts with `date_anchor_split` and publications with `marker_split` and
+`hanging_indent_split` instead of `anchor_split`.
 **Methods for the name:** `top_lines`, `from_email`, `from_file_name` (lowest confidence, flagged).
 Accept thresholds per section are in `config/thresholds.json`.
 
@@ -441,7 +465,8 @@ industry, other}; publication `type` in {journal, conference, other}.
   `document`.
 - Attempt `status` is one of `ACCEPTED`, `BELOW_THRESHOLD`, `NO_OUTPUT`, `NOT_IMPLEMENTED`, `SKIPPED`.
 - Provenance `lines` are line ids (`p001_l0007`); education provenance also has `year`, `grade`
-  and `method`; experience provenance has `method` and `no_dates`. `personal_extra` also has `phone_digits` (phones as digits, for matching).
+  and `method`; experience provenance has `method` and `no_dates`; publication provenance has
+  `method`, `type_source`, `authors`, `volume`, `pages`, `doi` and `urls`. `personal_extra` also has `phone_digits` (phones as digits, for matching).
 - The main JSON keeps the key order of 5.1. The sidecar, index and run summary use sorted keys.
 - Schema: `schema/meta.schema.json`.
 
@@ -546,7 +571,8 @@ evaluator's matching and field checks.
   header or skills line, non-paper publication, duplicate, wrapped-line fragment, bleed from
   another section, other. Education and experience are printed in groups (header row, bleed,
   split fragment, other; plus school-level for education and content-routed for experience: an
-  "other" entry whose lines all come from content_guess blocks).
+  "other" entry whose lines all come from content_guess blocks). Publications are printed as
+  header or sub-heading, non-paper, bleed, split fragment, citation-like (not in GT), other.
 - Tables are per section, with dev and tuned side by side.
 - Per-item and false-positive files (`reports/funnel/`, no resume text) are written for dev and
   tuned only.

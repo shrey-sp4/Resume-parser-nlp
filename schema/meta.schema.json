@@ -152,7 +152,13 @@
         "year": {"type": ["string", "null"]},
         "grade": {"type": ["string", "null"]},
         "method": {"type": "string"},
-        "no_dates": {"type": "boolean"}
+        "no_dates": {"type": "boolean"},
+        "type_source": {"enum": ["subheading", "section heading", "venue word", "cue", "default"]},
+        "authors": {"type": ["string", "null"]},
+        "volume": {"type": ["string", "null"]},
+        "pages": {"type": ["string", "null"]},
+        "doi": {"type": ["string", "null"]},
+        "urls": {"type": "array", "items": {"type": "string"}}
       }
     }
   }

@@ -52,16 +52,20 @@ def test_validate_gt_prints_ids_only(data_dir, capsys):
 # ---------------------------------------------------------------- stubs guard
 
 
-def test_run_refuses_while_stubs_are_left(data_dir, capsys):
-    import make_synthetic_resumes as synth
-    from resume_parser.pipeline import unimplemented_methods
+# every stage is built now, so a stub is put in place to check that the guard still works
 
+FAKE_STUBS = ["stage5.publications: not_built_example"]
+
+
+def test_run_refuses_while_stubs_are_left(data_dir, monkeypatch, capsys):
+    import make_synthetic_resumes as synth
+    from resume_parser import pipeline
+
+    monkeypatch.setattr(pipeline, "unimplemented_methods", lambda: list(FAKE_STUBS))
     synth.build_all(data_dir / "pdfs")
     assert main(["run"]) == 2
     captured = capsys.readouterr()
-    stubs = unimplemented_methods()
-    assert stubs
-    for name in stubs:
+    for name in FAKE_STUBS:
         assert f"  {name}\n" in captured.err
     assert "--allow-stubs" in captured.err
     assert captured.out == ""  # nothing processed
@@ -69,9 +73,11 @@ def test_run_refuses_while_stubs_are_left(data_dir, capsys):
     assert not (data_dir / "reports" / "run_summary.json").exists()
 
 
-def test_run_with_allow_stubs_processes(data_dir, capsys):
+def test_run_with_allow_stubs_processes(data_dir, monkeypatch, capsys):
     import make_synthetic_resumes as synth
+    from resume_parser import pipeline
 
+    monkeypatch.setattr(pipeline, "unimplemented_methods", lambda: list(FAKE_STUBS))
     synth.build_all(data_dir / "pdfs")
     assert main(["run", "--allow-stubs"]) == 0
     assert "--allow-stubs given" in capsys.readouterr().err

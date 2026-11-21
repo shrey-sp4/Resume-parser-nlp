@@ -95,8 +95,7 @@ def test_resume_without_stage_files_is_reported(data_dir, capsys):
 
 def test_runs_on_stage_files_saved_by_the_pipeline(data_dir, capsys):
     """Real stage files from the pipeline: every GT item of the fake resumes is found in the
-    stage 1 lines and the right section; name, education and experience are extracted,
-    publications (still a stub) stop at S5."""
+    stage 1 lines and the right section, and every section is extracted."""
     synth.build_all(data_dir / "pdfs")
     assert cli_main(["run", "--allow-stubs", "--save-stages"]) == 0
     write_ground_truth(data_dir)
@@ -105,9 +104,7 @@ def test_runs_on_stage_files_saved_by_the_pipeline(data_dir, capsys):
     for group in ("dev", "tuned"):
         items = _items(data_dir, group).values()
         assert items and all(r["s1_ge95"] for r in items), [r["lost_at"] for r in items]
-        stub = [r for r in items if r["section"] == "publications"]
-        built = [r for r in items if r["section"] in ("name", "education", "experience")]
-        assert all(r["lost_at"] == "S5 entry" for r in stub)
+        built = [r for r in items if r["section"] in ("name", "education", "experience", "publications")]
         assert built and all(r["lost_at"] in ("ok", "S5 fields") for r in built),             [(r["section"], r["idx"], r["lost_at"], r["cause"]) for r in built]
 
 
@@ -266,7 +263,7 @@ def test_check_validity_table_is_printed_from_sidecars(data_dir, capsys):
     assert funnel.main([]) == 0
     out = capsys.readouterr().out
     table = out.split("=== CHECK VALIDITY")[1]
-    assert "stage5" in table and "not_implemented" in table  # stage 5 is a stub, so items are lost there
+    assert "fired/+loss/missed" in table and "not_implemented" not in table  # every stage is built
     assert "test_frozen" not in table
 
 

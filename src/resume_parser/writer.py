@@ -129,6 +129,7 @@ def _stage5_sidecar(record: PipelineRecord) -> tuple[dict, dict, dict, dict]:
     personal = data.get("personal") if isinstance(data.get("personal"), dict) else {}
     education = data.get("education") if isinstance(data.get("education"), dict) else {}
     experience = data.get("experience") if isinstance(data.get("experience"), dict) else {}
+    publications = data.get("publications") if isinstance(data.get("publications"), dict) else {}
     extra = {"emails": [], "phones": [], "phone_digits": [], "links": []}
     extra.update(personal.get("personal_extra") or {})
     provenance = {}
@@ -140,6 +141,8 @@ def _stage5_sidecar(record: PipelineRecord) -> tuple[dict, dict, dict, dict]:
     parsed_dates = {}
     for i, side in enumerate(experience.get("sides") or []):
         provenance[f"experience[{i}]"] = dict(side)
+    for i, side in enumerate(publications.get("sides") or []):
+        provenance[f"publications[{i}]"] = dict(side)
     for i, dates in enumerate(experience.get("parsed_dates") or []):
         parsed_dates[f"experience[{i}]"] = {"start": dates.get("start"), "end": dates.get("end")}
     excluded = {"school_level_education": [dict(s) for s in education.get("excluded") or []],

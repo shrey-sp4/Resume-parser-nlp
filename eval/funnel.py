@@ -55,6 +55,8 @@ Education and experience false positives are printed in groups: header row, blee
 section, split fragment (duplicate or wrapped-line fragment), other; education also has
 school-level, and experience has content-routed (an "other" entry whose lines all come from
 blocks that stage 4 sent to the section by content_guess, read from the sidecar provenance).
+Publication false positives are printed as: header or sub-heading, non-paper, bleed from
+another section, split fragment, citation-like (not in GT), other.
 
 Check validity (dev + tuned only): for every label-free check that fired (each stage's
 reason codes, and each stage's WARN/FAIL status) the table counts, per group, the resumes it
@@ -467,7 +469,17 @@ FP_GROUPS = ("school-level", "header row", "bleed from another section", "split 
 EXP_FP_GROUPS = ("header row", "bleed from another section", "split fragment", "content-routed", "other")
 
 
+PUB_FP_GROUP = {"non-paper publication": "non-paper", "table header or skills line": "header or sub-heading",
+                "duplicate of an already-matched GT item": "split fragment", "wrapped-line fragment": "split fragment",
+                "bleed from another section": "bleed from another section",
+                "other: citation-like, not in GT": "citation-like, not in GT"}
+PUB_FP_GROUPS = ("header or sub-heading", "non-paper", "bleed from another section", "split fragment",
+                 "citation-like, not in GT", "other")
+
+
 def fp_group(cause: str, section: str = "education", from_content: bool = False) -> str:
+    if section == "publications":
+        return PUB_FP_GROUP.get(cause, "other")
     group = FP_GROUP.get(cause, "other")
     if section == "experience" and group == "other" and from_content:
         return "content-routed"
@@ -632,18 +644,11 @@ def method_counts(results: dict):
 def print_fps(results: dict) -> None:
     groups = list(results)
     print(f"\n  {'section':<14}{'cause':<46}" + "".join(f"{g:>12}" for g in groups))
-    for sec, names in (("education", FP_GROUPS), ("experience", EXP_FP_GROUPS)):
+    for sec, names in (("education", FP_GROUPS), ("experience", EXP_FP_GROUPS), ("publications", PUB_FP_GROUPS)):
         tot = {g: sum(1 for f in results[g]["fps"] if f["section"] == sec) for g in groups}
         for c in names:
             cnt = {g: sum(1 for f in results[g]["fps"] if f["section"] == sec
                           and fp_group(f["cause"], sec, f.get("from_content", False)) == c) for g in groups}
-            if any(cnt.values()):
-                print(f"  {sec:<14}{c:<46}" + "".join(f"{cnt[g]:>12}" for g in groups))
-        print(f"  {sec:<14}{'TOTAL':<46}" + "".join(f"{tot[g]:>12}" for g in groups))
-    for sec in ("publications",):
-        tot = {g: sum(1 for f in results[g]["fps"] if f["section"] == sec) for g in groups}
-        for c in FP_CAUSES:
-            cnt = {g: sum(1 for f in results[g]["fps"] if f["section"] == sec and f["cause"] == c) for g in groups}
             if any(cnt.values()):
                 print(f"  {sec:<14}{c:<46}" + "".join(f"{cnt[g]:>12}" for g in groups))
         print(f"  {sec:<14}{'TOTAL':<46}" + "".join(f"{tot[g]:>12}" for g in groups))
@@ -705,7 +710,7 @@ def run(a: argparse.Namespace) -> int:
             fps += fp
             per_unit = (st["records"]["stage5"] or {}).get("per_unit") or {}
             methods5 += [(sec, (per_unit.get(sec) or {}).get("method_used") or "none")
-                         for sec in ("personal", "education", "experience")]
+                         for sec in ("personal", "education", "experience", "publications")]
             if g != "test_frozen":  # never looked at per resume for test_frozen
                 fired = load_checks(stem)
                 if fired is not None:

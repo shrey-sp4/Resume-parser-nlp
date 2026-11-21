@@ -1,0 +1,15 @@
+{
+  "_comment": "Words used to split publication sections into citations and read their fields (whole words, any case unless noted). journal_words and conference_words set the type from the venue; abbreviations keep their dot optional; 'J.' counts as a journal word only before an abbreviated word or 'of' ('J. Appl. Phys.', 'J. of ...'), so an author initial is never one (set in the code). weak_type_words (Proceedings, Review, Letters, ...) set the type from the venue only when no section heading sets one; the other journal and conference words always do. publisher_words help find the venue but never set the type. conference_cues and other_cues are used only when no sub-heading, section heading or venue word sets the type. subheading_words mark a short heading line inside a publications section (Journal Papers, Conference Proceedings, Book Chapters); it sets the type of the entries under it and is never an entry. author_connectors are lower-case name parts allowed inside an author list. No personal data.",
+  "journal_words": ["journal", "journals", "transactions", "trans.", "letters", "lett.", "review", "reviews", "rev.", "bulletin", "annals", "magazine", "acta", "chronicle"],
+  "conference_words": ["proceedings", "proc.", "conference", "conferences", "conf.", "symposium", "symp.", "workshop", "congress", "colloquium", "convention"],
+  "weak_type_words": ["proceedings", "proc.", "review", "reviews", "rev.", "letters", "lett.", "bulletin", "annals", "magazine", "congress"],
+  "publisher_words": ["ieee", "acm", "springer", "elsevier", "wiley", "taylor & francis", "sage", "iop", "aip", "acs", "rsc", "mdpi", "frontiers", "nature", "science", "arxiv", "ssrn", "lecture notes"],
+  "conference_cues": ["int. conf", "intl. conf", "annual meeting", "annual conference"],
+  "other_cues": ["arxiv", "preprint", "technical report", "tech. rep", "tech. report", "thesis", "dissertation", "patent", "book chapter", "chapter in", "in press", "submitted", "under review", "communicated"],
+  "subheading_words": {
+    "journal": ["journal", "journals", "journal papers", "journal articles", "journal publications", "peer reviewed journals", "refereed journals", "articles"],
+    "conference": ["conference", "conferences", "conference papers", "conference proceedings", "proceedings", "symposium", "symposia", "workshops"],
+    "other": ["book chapters", "book chapter", "books", "chapters", "patents", "patent", "preprints", "technical reports", "reports", "monographs", "edited books", "theses", "popular articles", "magazine articles"]
+  },
+  "author_connectors": ["and", "&", "et", "al", "al.", "de", "van", "von", "der", "den", "da", "di", "la", "le", "del", "dos", "du", "bin", "binti", "ter"]
+}

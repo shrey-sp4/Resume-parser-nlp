@@ -31,7 +31,7 @@ def test_main_json_is_valid_and_has_empty_fields(synthetic_pdfs):
     assert record.main["candidate_name"] == "Jonas Fakely"
     assert [e["degree"] for e in record.main["education"]] == ["Ph.D.", "M.Tech.", "B.Tech."]
     assert record.main["experience"] == synth.synthetic_ground_truth()["synthetic_b_table"]["experience"]
-    assert record.main["publications"] == []  # still a stub
+    assert record.main["publications"] == synth.synthetic_ground_truth()["synthetic_b_table"]["publications"]
 
 
 def test_method_chains_are_registered_in_order():
@@ -44,7 +44,7 @@ def test_method_chains_are_registered_in_order():
         "exact_alias_map", "fuzzy_alias_match", "content_guess", "keep_as_other_with_warning"
     ]
     assert [m.name for m in SPLIT_METHODS] == [
-        "anchor_split", "table_row_split", "paragraph_split", "whole_section_one_entry"
+        "marker_split", "hanging_indent_split", "paragraph_split", "whole_section_one_entry"
     ]
     assert [m.name for m in NAME_METHODS] == ["top_lines", "from_email", "from_file_name"]
 
@@ -55,7 +55,7 @@ def test_stage5_chooses_per_section(synthetic_pdfs):
     assert stage5.per_unit["personal"].method_used == "top_lines"  # accepted first, the rest not run
     assert stage5.per_unit["education"].method_used == "anchor_split"
     assert stage5.per_unit["experience"].method_used == "date_anchor_split"
-    assert stage5.per_unit["publications"].method_used is None  # still a stub
+    assert stage5.per_unit["publications"].method_used == "marker_split"
 
 
 def test_stub_flags_match_what_the_methods_return():
@@ -69,8 +69,7 @@ def test_stub_flags_match_what_the_methods_return():
                 assert method.fn(None).implemented is False, f"{stage}: {method.name}"
                 listed.append(f"{stage}: {method.name}")
     assert sorted(listed) == unimplemented_methods()
-    assert "stage5: anchor_split" in listed  # experience and publications are still stubs
-    assert not [m for m in listed if m.startswith(("stage5.personal", "stage5.education"))]
+    assert not [m for m in listed if m.startswith("stage5")]  # every stage 5 section is built
 
 
 def test_stages_0_to_2_have_no_stubs_left():

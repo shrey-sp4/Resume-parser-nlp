@@ -707,6 +707,18 @@ section; items lost by step; the check-validity table for every stage; the decis
 decision, how many resumes have a real loss. The thresholds were chosen on the same resumes, so
 that last table is optimistic.
 
+**`eval/folds.py`** (rotating hold-out, development groups only): the development resumes are
+cut into 3 fixed folds (sorted by resume ID, shuffled with `random.Random(0)`); the folds are
+stored as resume IDs in `RESUME_DATA_DIR/reports/folds/folds.json`, never in the repo. Per fold:
+P/R/F1 with 95% CIs per section, name accuracy, the spread across folds, the resumes whose removal
+raises the fold's F1 most, and the experience and education funnel. The rules were tuned on all of
+these resumes, so these are not held-out scores; they show which sections vary most and which
+resumes pull a fold down.
+
+**Layout tests** (`tests/test_layouts.py`, invented content only): one column, two columns, a
+left sidebar and tables, built at test time, each checked at S1 (reading order), S4 (section) and
+S5 (entries). A layout that fails today is marked `xfail(strict=False)` with the failing stage.
+
 **Learned publication-field reader (experimental, not in the pipeline).**
 `src/resume_parser/learn/pub_reader.py` reads title, venue, year and type from a stage 5
 publication entry (the splitting stays rule-based) with scikit-learn (optional `learn` extra):
@@ -736,7 +748,7 @@ resume-parser/
      entities/ personal.py  education.py  experience.py  publications.py
      field_norm.py  validate.py  scoring.py  writer.py   (writer.py writes main JSON + sidecar + index + review queue)
      learn/    pub_reader.py                    (experimental learned publication fields; not used by any stage)
-  eval/     common.py  evaluate.py  funnel.py  calibrate_thresholds.py  end_to_end.py  pub_reader_loo.py   (common.py: groups, IDs, validation and test_frozen guards)
+  eval/     common.py  evaluate.py  funnel.py  calibrate_thresholds.py  end_to_end.py  pub_reader_loo.py  folds.py   (common.py: groups, IDs, validation and test_frozen guards)
   fixtures/ synthetic/   (fake resumes, built by a script)
   tests/    one test file per stage, plus determinism
   scripts/  check_no_data.py  make_synthetic_resumes.py

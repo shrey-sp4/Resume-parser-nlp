@@ -9,7 +9,8 @@ Builds three resumes:
 
 Also gives ground truth (GT v2) for the three resumes, for the evaluator tests, and has
 helpers for page-profile tests: a text-only page, an image-only page
-(a drawn raster, no text) and a mixed page.
+(a drawn raster, no text) and a mixed page. LAYOUTS builds one invented resume in four page
+layouts (one column, two columns, left sidebar, tables) for the reading-order tests.
 
 PDFs are built with reportlab's invariant mode, so the same input gives the
 same bytes. Never commit the PDFs; tests build them in a temp folder.
@@ -391,6 +392,136 @@ def make_heading_table_pdf(path: Path, heading: str, rows: list[list[str]], afte
     story += [Paragraph(text, style_of[s]) for s, text in after]
     SimpleDocTemplate(str(path), pagesize=A4, title="synthetic heading table", author="synthetic").build(story)
     return path
+
+
+# ---------------------------------------------------------------- layout resumes
+#
+# Four page layouts with the same kind of invented content, for the reading-order tests
+# (tests/test_layouts.py): one column, two columns, a left sidebar, and tables. Every name,
+# institution, company, venue and title here is made up.
+
+LAYOUT_EDU = [("Ph.D. in Toy Physics, Westmere University, 2012 - 2017",
+               _edu("Ph.D.", "doctorate", "Toy Physics", "Westmere University")),
+              ("M.Sc. in Applied Optics, Calder Valley College, 2010 - 2012",
+               _edu("M.Sc.", "masters", "Applied Optics", "Calder Valley College"))]
+LAYOUT_EXP = [("Associate Professor, Brightford Institute of Technology, 2020 - Present",
+               _exp("Associate Professor", "Brightford Institute of Technology", "2020 - Present", "academic")),
+              ("Research Engineer, Glimmerworks Labs Pvt Ltd, 2017 - 2020",
+               _exp("Research Engineer", "Glimmerworks Labs Pvt Ltd", "2017 - 2020", "industry"))]
+LAYOUT_PUB = [("1. T. Vonbrook, O. Halvaster. Quiet lattices in pretend crystals. Journal of Pretend Physics, 2021.",
+               _pub("Quiet lattices in pretend crystals", "journal", "2021", "Journal of Pretend Physics")),
+              ("2. T. Vonbrook. Folding light in toy fibres. Proc. Imaginary Symposium on Optics, 2019.",
+               _pub("Folding light in toy fibres", "conference", "2019", "Proc. Imaginary Symposium on Optics"))]
+LAYOUT_NAME = "Talia Vonbrook"
+LAYOUT_CONTACT = "talia.vonbrook@example.org | +00 0000 000 009"
+LAYOUT_SKILLS = ["Python", "Optics modelling", "Lab safety"]
+
+
+def layout_ground_truth(stem: str) -> dict:
+    """The ground truth (GT v2) of a layout resume; the same for all four layouts."""
+    return {"resume_file": f"{stem}.pdf", "candidate_name": LAYOUT_NAME,
+            "education": [gt for _, gt in LAYOUT_EDU], "experience": [gt for _, gt in LAYOUT_EXP],
+            "publications": [gt for _, gt in LAYOUT_PUB],
+            "stated_totals": {"journal": None, "conference": None, "total": None}, "notes": ""}
+
+
+def _text(c: canvas.Canvas, x: float, y: float, style: str, text: str) -> float:
+    font, size, step = FONTS[style]
+    if style == "heading":
+        y -= 6
+    c.setFont(font, size)
+    c.drawString(x, y, text)
+    return y - step
+
+
+def _wrapped(text: str, width_chars: int) -> list[str]:
+    """Cut a line into parts of at most width_chars, at spaces."""
+    out, cur = [], ""
+    for word in text.split():
+        if cur and len(cur) + 1 + len(word) > width_chars:
+            out.append(cur)
+            cur = word
+        else:
+            cur = f"{cur} {word}".strip()
+    return out + ([cur] if cur else [])
+
+
+def _column(c: canvas.Canvas, x: float, y: float, blocks: list[tuple[str, list[str]]], width_chars: int,
+            indent: float = 12) -> float:
+    """Headings with their entries; a long entry wraps, its later parts indented (hanging)."""
+    for heading, entries in blocks:
+        y = _text(c, x, y, "heading", heading)
+        for entry in entries:
+            for k, part in enumerate(_wrapped(entry, width_chars)):
+                y = _text(c, x + (indent if k else 0), y, "body", part)
+    return y
+
+
+def make_layout_one_column(path: Path) -> Path:
+    c = _new_canvas(path, "synthetic layout one column")
+    y = _text(c, MARGIN, HEIGHT - MARGIN, "name", LAYOUT_NAME)
+    y = _text(c, MARGIN, y, "contact", LAYOUT_CONTACT)
+    _column(c, MARGIN, y, [("EDUCATION", [t for t, _ in LAYOUT_EDU]), ("EXPERIENCE", [t for t, _ in LAYOUT_EXP]),
+                           ("PUBLICATIONS", [t for t, _ in LAYOUT_PUB]), ("SKILLS", [", ".join(LAYOUT_SKILLS)])], 110)
+    c.showPage()
+    c.save()
+    return path
+
+
+def make_layout_two_columns(path: Path) -> Path:
+    """Name and contact across the page; education and experience in the left column,
+    publications and skills in the right one, both starting at the same height."""
+    c = _new_canvas(path, "synthetic layout two columns")
+    y = _text(c, MARGIN, HEIGHT - MARGIN, "name", LAYOUT_NAME)
+    y = _text(c, MARGIN, y, "contact", LAYOUT_CONTACT) - 6
+    mid = WIDTH / 2 + 6
+    _column(c, MARGIN, y, [("EDUCATION", [t for t, _ in LAYOUT_EDU]), ("EXPERIENCE", [t for t, _ in LAYOUT_EXP])], 48)
+    _column(c, mid, y, [("PUBLICATIONS", [t for t, _ in LAYOUT_PUB]), ("SKILLS", [", ".join(LAYOUT_SKILLS)])], 48)
+    c.showPage()
+    c.save()
+    return path
+
+
+def make_layout_sidebar(path: Path) -> Path:
+    """A narrow left sidebar (contact and skills) next to the main text (name, education,
+    experience, publications) on the right."""
+    c = _new_canvas(path, "synthetic layout sidebar")
+    side_x, main_x = 36, 196
+    top = HEIGHT - MARGIN
+    y = _text(c, side_x, top, "heading", "CONTACT")
+    for part in ("talia.vonbrook@example.org", "+00 0000 000 009", "Fakeville"):
+        y = _text(c, side_x, y, "contact", part)
+    y = _text(c, side_x, y, "heading", "SKILLS")
+    for skill in LAYOUT_SKILLS:
+        y = _text(c, side_x, y, "body", skill)
+    y = _text(c, main_x, top, "name", LAYOUT_NAME)
+    _column(c, main_x, y, [("EDUCATION", [t for t, _ in LAYOUT_EDU]), ("EXPERIENCE", [t for t, _ in LAYOUT_EXP]),
+                           ("PUBLICATIONS", [t for t, _ in LAYOUT_PUB])], 70)
+    c.showPage()
+    c.save()
+    return path
+
+
+def make_layout_tables(path: Path) -> Path:
+    """Education and experience as ruled tables with a header row; publications as a list."""
+    styles = getSampleStyleSheet()
+    style = TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 9)])
+    edu = [["Degree", "Institution", "Year"]] + [[f"{g['degree']} {g['stream']}", g["institution"], t.rsplit(", ", 1)[1]]
+                                                 for t, g in LAYOUT_EDU]
+    exp = [["Designation", "Organisation", "Duration"]] + [[g["job_title"], g["institution"], g["dates"]]
+                                                           for _, g in LAYOUT_EXP]
+    story = [Paragraph(LAYOUT_NAME, styles["Title"]), Paragraph(LAYOUT_CONTACT, styles["Normal"]), Spacer(1, 8),
+             Paragraph("Education", styles["Heading2"]), Table(edu, hAlign="LEFT", style=style), Spacer(1, 8),
+             Paragraph("Experience", styles["Heading2"]), Table(exp, hAlign="LEFT", style=style), Spacer(1, 8),
+             Paragraph("Publications", styles["Heading2"])]
+    story += [Paragraph(t, styles["Normal"]) for t, _ in LAYOUT_PUB]
+    SimpleDocTemplate(str(path), pagesize=A4, title="synthetic layout tables", author="synthetic").build(story)
+    return path
+
+
+LAYOUTS = {"layout_one_column": make_layout_one_column, "layout_two_columns": make_layout_two_columns,
+           "layout_sidebar": make_layout_sidebar, "layout_tables": make_layout_tables}
 
 
 def main(argv: list[str] | None = None) -> int:

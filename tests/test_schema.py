@@ -29,6 +29,7 @@ VALID_META = {
     "resume_file": "xyz.pdf",
     "decision": "NEEDS_REVIEW",
     "needs_review": True,
+    "decision_reasons": ["low_score:education"],
     "flags": [{"section": "education", "code": "UNASSIGNED_TARGET_LINES", "detail": ""}],
     "section_scores": {"personal": 1.0, "education": 0.9, "experience": None, "publications": 0.8},
     "personal_extra": {"emails": [], "phones": [], "phone_digits": [], "links": []},
@@ -60,7 +61,8 @@ VALID_META = {
 
 VALID_INDEX = {
     "schema_version": "1.0",
-    "resumes": [{"decision": "ACCEPT", "flags_count": 0, "resume_file": "xyz.pdf", "resume_id": "r_0123abcd"}],
+    "resumes": [{"decision": "ACCEPT", "flags_count": 0, "reasons": [], "resume_file": "xyz.pdf",
+                 "resume_id": "r_0123abcd"}],
 }
 
 

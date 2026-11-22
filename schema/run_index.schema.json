@@ -12,10 +12,11 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["decision", "flags_count", "resume_file", "resume_id"],
+        "required": ["decision", "flags_count", "reasons", "resume_file", "resume_id"],
         "properties": {
-          "decision": {"enum": ["ACCEPT", "NEEDS_REVIEW"]},
+          "decision": {"enum": ["ACCEPT", "NEEDS_REVIEW", "FAIL"]},
           "flags_count": {"type": "integer", "minimum": 0},
+          "reasons": {"type": "array", "items": {"type": "string", "pattern": "^[A-Za-z0-9_]+(:[A-Za-z0-9_]+)?$"}},
           "resume_file": {"type": "string", "minLength": 1},
           "resume_id": {"type": "string", "pattern": "^r_[0-9a-f]{8}$"}
         }

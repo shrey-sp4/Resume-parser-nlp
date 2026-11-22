@@ -17,7 +17,7 @@ def test_report_counts_for_three_fake_resumes(data_dir, capsys):
     s = _summary(data_dir)
 
     assert s["resumes_total"] == 3
-    assert s["decisions"] == {"ACCEPT": 3, "NEEDS_REVIEW": 0}
+    assert s["decisions"] == {"ACCEPT": 3, "NEEDS_REVIEW": 0, "FAIL": 0}
     for i in range(8):
         counts = dict(s["stages"][f"stage{i}"])
         counts.pop("not_implemented")
@@ -69,7 +69,7 @@ def test_report_counts_with_a_stopped_resume(data_dir, capsys):
     s = _summary(data_dir)
 
     assert s["resumes_total"] == 4
-    assert s["decisions"] == {"ACCEPT": 3, "NEEDS_REVIEW": 1}
+    assert s["decisions"] == {"ACCEPT": 3, "NEEDS_REVIEW": 0, "FAIL": 1}  # the scanned page stops at stage 1
     assert s["stages"]["stage0"] == {
         "entered": 4, "ok": 3, "warn": 1, "fail": 0, "stopped": 0, "not_implemented": 0
     }

@@ -10,6 +10,7 @@
     "resume_file",
     "decision",
     "needs_review",
+    "decision_reasons",
     "flags",
     "section_scores",
     "personal_extra",
@@ -24,6 +25,7 @@
     "resume_file": {"type": "string", "minLength": 1},
     "decision": {"$ref": "#/$defs/decision"},
     "needs_review": {"type": "boolean"},
+    "decision_reasons": {"type": "array", "items": {"$ref": "#/$defs/code"}},
     "flags": {"type": "array", "items": {"$ref": "#/$defs/flag"}},
     "section_scores": {
       "type": "object",
@@ -79,7 +81,7 @@
     }
   },
   "$defs": {
-    "decision": {"enum": ["ACCEPT", "NEEDS_REVIEW"]},
+    "decision": {"enum": ["ACCEPT", "NEEDS_REVIEW", "FAIL"]},
     "status": {"enum": ["OK", "WARN", "FAIL"]},
     "score": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
     "section": {

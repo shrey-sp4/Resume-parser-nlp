@@ -54,10 +54,10 @@ methods" below).
 
 **What a FAIL does.**
 - FAIL in stage 0 or 1: stop. There is no usable text, so nothing later can be trusted.
-  Only a sidecar and an index entry are written, with the reason. (Nothing is written to
-  `review_queue/` yet; the index shows the decision.)
-- WARN or FAIL in stages 2 to 7: carry on, but mark the resume and the affected section.
-  The JSON is still written, with `needs_review: true` and the reasons, so no information is lost.
+  Only a sidecar and an index entry are written, with the decision FAIL and the reason
+  `stage<N>_failed`; the resume is listed in `review_queue/review_queue.json`.
+- WARN or FAIL in stages 2 to 7: carry on, and record the flags with the affected section.
+  The JSON is still written, so no information is lost. The decision itself comes from stage 6.
 - Information-level reason codes are kept in the stage report but are not flags:
   `not_implemented` (a method is not built yet), and `missing_target_section:personal` /
   `missing_target_section:publications` (stage 4 found no such section). A missing education
@@ -377,12 +377,24 @@ stored in the sidecar file.
 - Coverage (all sections): every line of the section belongs to an entry or is marked noise.
   Leftover lines are the main sign of missed content.
 
-### Stage 6: Validation and scoring
-- Each section gets a score from its checks (weighted share of checks passed).
-- Decision: **ACCEPT** if every target section meets its threshold. Otherwise **NEEDS_REVIEW**,
-  with the section names and reasons.
-- Thresholds live in `config/thresholds.json` and are chosen from ground truth (section 7).
-  Until then they are placeholders, marked as to be calibrated.
+### Stage 6: Validation and scoring (built)
+- Section scores, label-free: the check score of the method stage 5 chose for the name (the
+  personal unit), education, experience and publications; None for a section stage 4 did not
+  find, 0.0 for a found section whose methods gave no output (`scoring.py`).
+- Decision from the four critical sections, as reason codes (`validate.py`; `<s>` is name,
+  education, experience or publications):
+  - **FAIL**: stage 0 or 1 failed (`stage0_failed`, `stage1_failed`; set when the sidecar is
+    built, because stage 6 does not run then), or the name is empty (`empty_name`; the main
+    JSON is still written)
+  - **NEEDS_REVIEW**: `missing_section:<s>` (not for the name), `low_score:<s>` (below
+    `section_score_threshold`), `whole_section_one_entry:<s>`, `name_from_email`,
+    `name_from_file_name`, `no_entries:<s>` (the section has lines but no entry; never silent);
+    also `main_json_invalid` from stage 7
+  - **ACCEPT** otherwise. Flags from earlier stages stay in the sidecar but do not decide alone.
+- Stage 6 is OK for ACCEPT, WARN for NEEDS_REVIEW, FAIL for FAIL; its reasons become flags.
+- `section_score_threshold` in `config/thresholds.json` is chosen by
+  `eval/calibrate_thresholds.py` (section 7). `accept_threshold_by_section` (stage 5 method
+  choice) is a separate setting and is not changed by the calibration.
 
 ### Stage 7: Output
 - Two files per resume, plus one index file and one run summary per run, all in the data
@@ -394,6 +406,11 @@ stored in the sidecar file.
 - No timestamps, no absolute paths. Keys and lists in a fixed order.
 - With `--save-stages`, the output of stages 1, 3, 4 and 5 is also saved per resume, for the
   funnel (section 6).
+- After each run: `outputs/run_index.json` and `review_queue/review_queue.json` (5.3).
+- Determinism: `python -m resume_parser.cli check-determinism [--groups]` runs the selected
+  PDFs twice into `reports/determinism/a` and `b` and compares every output byte for byte
+  (main JSON, sidecar, index, review queue); it prints counts and the resume IDs that differ.
+  test_frozen is refused.
 
 ## 5. Output format
 
@@ -437,6 +454,7 @@ industry, other}; publication `type` in {journal, conference, other}.
   "resume_file": "xyz.pdf",
   "decision": "ACCEPT",
   "needs_review": false,
+  "decision_reasons": [],
   "flags": [{"section": "education", "code": "UNASSIGNED_TARGET_LINES", "detail": ""}],
   "section_scores": {"personal": 1.0, "education": 0.9, "experience": 1.0, "publications": 0.8},
   "personal_extra": {"emails": [], "phones": [], "links": []},
@@ -476,16 +494,22 @@ Why a separate file: the main JSON stays identical to the ground truth, and the 
 
 ### 5.3 Run index
 
-`outputs/run_index.json`: for each resume, its `resume_file`, `resume_id`, `decision` and
-`flags_count`, sorted by file name. It is rebuilt from every sidecar in `outputs/` after each run.
+`outputs/run_index.json`: for each resume, its `resume_file`, `resume_id`, `decision`
+(ACCEPT, NEEDS_REVIEW or FAIL), `reasons` (the stage 6 reason codes) and `flags_count`, sorted
+by file name. It is rebuilt from every sidecar in `outputs/` after each run.
 The shortlisting system reads the index so it knows which resumes were accepted and which are
 flagged. (A flagged resume still has its main JSON, so the recruiter can still see it.)
 Schema: `schema/run_index.schema.json`.
+
+`review_queue/review_queue.json`: every resume that is not ACCEPT, as `resume_id`, `decision` and
+`reasons`, sorted by resume ID; IDs only, never file names. Rebuilt from the index after each
+run. Schema: `schema/review_queue.schema.json`.
 
 ### 5.4 Run summary (funnel report)
 
 `reports/run_summary.json`, written after every batch from every sidecar in `outputs/`.
 Resume IDs only, sorted keys:
+- decisions: how many resumes are ACCEPT, NEEDS_REVIEW and FAIL
 - per stage: how many resumes entered it, and how many ended OK, WARN or FAIL, or stopped there;
   plus `not_implemented`, the number of choices passed as OK only because the methods are not
   built yet (pages in stage 1, sections in stage 5, one per resume elsewhere)
@@ -617,6 +641,23 @@ thresholds:
 
 Report: of the accepted resumes, how many are fully correct; and what share go to review.
 
+**`eval/calibrate_thresholds.py`** (dev+tuned only; `--write` writes `section_score_threshold`):
+- Real loss per resume and section, used for the choice: recall or precision below 0.8 (name:
+  `name_norm` wrong or empty). Tables for reading only: F1 below 1, and any item lost at any
+  funnel step (field errors included).
+- A section is flagged when its score is below the threshold or the section is missing. Per
+  candidate threshold (observed scores, 0, 1 and "flag all", which is shown but never chosen):
+  flagged share, catch rate, false alarms.
+- Choice: the smallest flagged share with a catch rate of at least 90%; where none reaches it,
+  the best catch rate, and the report says so. Leave-one-resume-out shows how stable the choice
+  is. 25 resumes is a small sample.
+
+**`eval/end_to_end.py`** (dev and tuned): name, education, experience and publications P/R/F1
+with 95% CIs (name: P = right names / names given, R = right names / GT names); the funnel per
+section; items lost by step; the check-validity table for every stage; the decisions and, per
+decision, how many resumes have a real loss. The thresholds were chosen on the same resumes, so
+that last table is optimistic.
+
 ## 8. Repo layout
 
 ```
@@ -624,15 +665,15 @@ resume-parser/
   README.md  LICENSE  pyproject.toml  requirements.txt  .gitignore
   .githooks/pre-commit  .github/workflows/ci.yml
   config/   section_aliases.json  degrees.json  titles.json  institutions.json  thresholds.json
-  schema/   resume.schema.json  meta.schema.json  run_index.schema.json
+  schema/   resume.schema.json  meta.schema.json  run_index.schema.json  review_queue.schema.json
   src/resume_parser/
      intake.py  pipeline.py  cli.py  schema.py  groups.py  headings.py   (groups: data split; headings: aliases, content patterns)
      report.py                                   (run summary, section 5.4)
      extract/  base.py  lines.py  source.py  pdfplumber_extractor.py  pdfminer_extractor.py  ocr_extractor.py
      clean.py  sections.py  normalize.py        (normalize.py builds the Canonical Document)
      entities/ personal.py  education.py  experience.py  publications.py
-     field_norm.py  validate.py  scoring.py  writer.py   (writer.py writes main JSON + sidecar + index)
-  eval/     common.py  evaluate.py  funnel.py  calibrate_thresholds.py   (common.py: groups, IDs, test_frozen guard)
+     field_norm.py  validate.py  scoring.py  writer.py   (writer.py writes main JSON + sidecar + index + review queue)
+  eval/     common.py  evaluate.py  funnel.py  calibrate_thresholds.py  end_to_end.py   (common.py: groups, IDs, test_frozen guard)
   fixtures/ synthetic/   (fake resumes, built by a script)
   tests/    one test file per stage, plus determinism
   scripts/  check_no_data.py  make_synthetic_resumes.py

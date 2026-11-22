@@ -7,6 +7,13 @@
                                               --groups picks GT groups (default dev,tuned;
                                               test_frozen only when named)
     python -m resume_parser.cli validate-gt   check RESUME_DATA_DIR/ground_truth_v2/*.json
+    python -m resume_parser.cli check-determinism [--groups]
+                                              run the selected PDFs twice into
+                                              RESUME_DATA_DIR/reports/determinism/a and b and
+                                              compare every output byte for byte
+
+Each run writes outputs/<name>.json and .meta.json, outputs/run_index.json and
+review_queue/review_queue.json (resume IDs and reason codes of the resumes that need a person).
 
 Output shows resume IDs only, never names, emails or phone numbers.
 """
@@ -51,6 +58,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         unknown_headings,
         write_index,
         write_resume,
+        write_review_queue,
         write_stage_files,
         write_unknown_headings,
     )
@@ -124,12 +132,58 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"unknown heading-like lines: {len(review)} (for review in RESUME_DATA_DIR/reports/"
               "stage3_unknown_headings.txt; test_frozen is never listed)")
     index = write_index(out_dir)
+    write_review_queue(index, root / "review_queue")
     summary = write_run_summary(out_dir, root / "reports")
     print(
         f"done: {len(pdfs)} processed, {errors} error(s); index has {len(index['resumes'])} resume(s); "
-        f"{summary['decisions']['NEEDS_REVIEW']} need review"
+        f"{summary['decisions']['NEEDS_REVIEW']} need review, {summary['decisions']['FAIL']} failed"
     )
     return 1 if errors else 0
+
+
+def cmd_check_determinism(args: argparse.Namespace) -> int:
+    """Run the selected PDFs twice into two folders inside the data folder and compare every
+    output file byte for byte. Prints counts and resume IDs only. test_frozen is refused."""
+    import shutil
+
+    from resume_parser.pipeline import run_pipeline
+    from resume_parser.schema import require_inside_data_root
+    from resume_parser.writer import write_index, write_resume, write_review_queue
+
+    root = data_root()
+    try:
+        selected, wanted = _select_by_group(_pdfs_in(root / "pdfs"), args.groups)
+    except groups_mod.GroupError as exc:
+        print(f"check-determinism: {exc}", file=sys.stderr)
+        return 2
+    if "test_frozen" in wanted:
+        print("check-determinism: test_frozen is not allowed here.", file=sys.stderr)
+        return 2
+    base = require_inside_data_root(root / "reports" / "determinism")
+    for run in ("a", "b"):
+        folder = base / run
+        if folder.exists():
+            shutil.rmtree(folder)
+        for pdf, _group in selected:
+            write_resume(run_pipeline(pdf), folder / "outputs")
+        index = write_index(folder / "outputs")
+        write_review_queue(index, folder / "review_queue")
+    files_a = sorted(p.relative_to(base / "a") for p in (base / "a").rglob("*") if p.is_file())
+    files_b = sorted(p.relative_to(base / "b") for p in (base / "b").rglob("*") if p.is_file())
+    differ = [f for f in files_a if f not in files_b or (base / "a" / f).read_bytes() != (base / "b" / f).read_bytes()]
+    differ += [f for f in files_b if f not in files_a]
+    def stem_of(name: str) -> str:
+        return name[: -len(".meta.json")] if name.endswith(".meta.json") else name[: -len(".json")]
+
+    ids = sorted({resume_id_for(stem_of(f.name) + ".pdf") for f in differ if f.parent.name == "outputs"
+                  and f.name != "run_index.json"})
+    others = sorted({f.name for f in differ if f.name in ("run_index.json", "review_queue.json")})
+    print(f"check-determinism: {len(selected)} resume(s), {len(files_a)} file(s) compared, {len(set(differ))} differ")
+    for rid in ids:
+        print(f"  {rid} differs")
+    for name in others:
+        print(f"  {name} differs")
+    return 1 if differ else 0
 
 
 def cmd_validate_gt(args: argparse.Namespace) -> int:
@@ -187,6 +241,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="check RESUME_DATA_DIR/ground_truth_v2/*.json against schema/resume.schema.json",
     )
     gt.set_defaults(func=cmd_validate_gt)
+
+    det = sub.add_parser("check-determinism", help="run twice and compare every output byte for byte")
+    det.add_argument("--groups", help="comma list of dev, tuned, unlabelled (default dev,tuned)")
+    det.set_defaults(func=cmd_check_determinism)
     return parser
 
 

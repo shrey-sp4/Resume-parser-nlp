@@ -18,10 +18,11 @@
     "other": 0.5
   },
   "section_score_threshold": {
-    "personal": 0.8,
-    "education": 0.8,
-    "experience": 0.8,
-    "publications": 0.8
+    "personal": 1.0,
+    "education": 1.0,
+    "experience": 0.9811,
+    "publications": 0.9231,
+    "_comment": "Stage 6: a section scoring below this goes to review. Chosen by eval/calibrate_thresholds.py on dev+tuned (25 resumes, a small sample): the smallest flagged share with a catch rate of at least 90%, or the best catch rate where no threshold reaches 90% (name, education, experience on this run); a real loss is recall or precision below 0.8 (name: name_norm wrong or empty)."
   },
   "page_profile": {
     "min_text_chars": 20,

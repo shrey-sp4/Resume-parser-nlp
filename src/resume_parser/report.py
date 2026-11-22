@@ -87,7 +87,7 @@ def build_run_summary(out_dir: Path) -> dict:
     return {
         "schema_version": SCHEMA_VERSION,
         "resumes_total": len(sidecars),
-        "decisions": {d: decisions.get(d, 0) for d in ("ACCEPT", "NEEDS_REVIEW")},
+        "decisions": {d: decisions.get(d, 0) for d in ("ACCEPT", "NEEDS_REVIEW", "FAIL")},
         "stages": stages,
         "method_usage": {name: dict(sorted(c.items())) for name, c in usage.items()},
         "fallbacks_used": {**fallbacks, "total": sum(fallbacks.values())},

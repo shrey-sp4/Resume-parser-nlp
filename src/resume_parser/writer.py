@@ -150,16 +150,30 @@ def _stage5_sidecar(record: PipelineRecord) -> tuple[dict, dict, dict, dict]:
     return extra, provenance, excluded, parsed_dates
 
 
+def decision_of(record: PipelineRecord) -> tuple[str, list[str]]:
+    """(decision, sorted reason codes). A stage 0 or 1 failure stops the pipeline before stage 6:
+    FAIL with stage<N>_failed. An invalid main JSON (stage 7) adds main_json_invalid and is at
+    least NEEDS_REVIEW. Without a stage 6 result (a partial pipeline in tests) any flag means
+    NEEDS_REVIEW."""
+    if record.stopped_at is not None:
+        return "FAIL", [f"stage{record.stopped_at}_failed"]
+    stage6 = record.results.get("stage6")
+    data = stage6.data if stage6 is not None and isinstance(stage6.data, dict) else None
+    if data is None:
+        return ("NEEDS_REVIEW" if record.flags else "ACCEPT"), []
+    decision, reasons = data["decision"], list(data.get("decision_reasons") or [])
+    stage7 = record.results.get("stage7")
+    if stage7 is not None and stage7.status is Status.FAIL:
+        reasons.append("main_json_invalid")
+        decision = "FAIL" if decision == "FAIL" else "NEEDS_REVIEW"
+    return decision, sorted(set(reasons))
+
+
 def build_sidecar(record: PipelineRecord) -> dict:
     """Sidecar for one resume (design 5.2). Keys are sorted when written."""
+    decision, reasons = decision_of(record)
     stage6 = record.results.get("stage6")
     stage6_data = stage6.data if stage6 and isinstance(stage6.data, dict) else {}
-
-    if record.stopped_at is not None or record.flags:
-        decision = "NEEDS_REVIEW"
-    else:
-        decision = stage6_data.get("decision", "ACCEPT")
-
     scores = stage6_data.get("section_scores") or {s: None for s in TARGET_SECTIONS}
     extra, provenance, excluded, parsed_dates = _stage5_sidecar(record)
     return {
@@ -168,6 +182,7 @@ def build_sidecar(record: PipelineRecord) -> dict:
         "resume_file": record.resume_file,
         "decision": decision,
         "needs_review": decision != "ACCEPT",
+        "decision_reasons": reasons,
         "flags": list(record.flags),
         "section_scores": dict(scores),
         "personal_extra": extra,
@@ -220,6 +235,7 @@ def build_index(out_dir: Path) -> dict:
             {
                 "decision": meta["decision"],
                 "flags_count": len(meta["flags"]),
+                "reasons": list(meta.get("decision_reasons") or []),
                 "resume_file": meta["resume_file"],
                 "resume_id": meta["resume_id"],
             }
@@ -234,6 +250,27 @@ def write_index(out_dir: Path) -> dict:
     index = _checked(build_index(out_dir), "run_index.schema.json")
     _write(out_dir / INDEX_FILE, dump_json(index, sort_keys=True))
     return index
+
+
+REVIEW_QUEUE_FILE = "review_queue.json"
+
+
+def build_review_queue(index: dict) -> dict:
+    """Resumes that need a person (NEEDS_REVIEW or FAIL): resume IDs and reason codes only,
+    sorted by resume ID, so the queue never shows a file name."""
+    rows = [{"decision": r["decision"], "reasons": list(r["reasons"]), "resume_id": r["resume_id"]}
+            for r in index["resumes"] if r["decision"] != "ACCEPT"]
+    rows.sort(key=lambda r: r["resume_id"])
+    return {"schema_version": SCHEMA_VERSION, "resumes": rows}
+
+
+def write_review_queue(index: dict, queue_dir: Path) -> dict:
+    """RESUME_DATA_DIR/review_queue/review_queue.json, rebuilt from the run index."""
+    queue_dir = require_inside_data_root(queue_dir)
+    queue_dir.mkdir(parents=True, exist_ok=True)
+    queue = _checked(build_review_queue(index), "review_queue.schema.json")
+    _write(queue_dir / REVIEW_QUEUE_FILE, dump_json(queue, sort_keys=True))
+    return queue
 
 
 # ---------------------------------------------------------------- unknown headings

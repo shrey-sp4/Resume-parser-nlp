@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "review_queue.schema.json",
+  "title": "Review queue (docs/design.md section 5.3): resume IDs and reason codes only",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "resumes"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "resumes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["decision", "reasons", "resume_id"],
+        "properties": {
+          "decision": {"enum": ["NEEDS_REVIEW", "FAIL"]},
+          "reasons": {"type": "array", "items": {"type": "string", "pattern": "^[A-Za-z0-9_]+(:[A-Za-z0-9_]+)?$"}},
+          "resume_id": {"type": "string", "pattern": "^r_[0-9a-f]{8}$"}
+        }
+      }
+    }
+  }
+}

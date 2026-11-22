@@ -17,7 +17,7 @@ def test_fail_in_stage1_stops_the_run(tmp_path):
     assert record.stopped_at == 1
     assert list(record.results) == ["stage0", "stage1"]
     assert record.main is None
-    assert record.sidecar["decision"] == "NEEDS_REVIEW"
+    assert record.sidecar["decision"] == "FAIL" and record.sidecar["decision_reasons"] == ["stage1_failed"]
     assert record.flags == [{"section": "document", "code": "no_text_layer", "detail": "stage1"}]
     assert schema_errors(record.sidecar, "meta.schema.json") == []
 

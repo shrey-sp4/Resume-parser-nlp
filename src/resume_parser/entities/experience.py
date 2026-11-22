@@ -43,8 +43,10 @@ Fields, as printed:
                institution, department or short place segments (up to 3 capitalised words), as
                printed. Otherwise only the institution segment is kept, except that a bare IIT,
                NIT, IIIT, IIM, IISER or BITS keeps the place written after it.
-  dates        the first date range (month names, 4- or 2-digit years, dash, en-dash, "to",
-               "till"; "Present", "till date", ... kept as printed), else a single date
+  dates        the first date range (month names, 4- or 2-digit years, day-first and year-first
+               dates, dash, en-dash, "to", "till"; "Present", "till date",
+               "onwards", ... kept as printed, except "1 st" is written "1st"), also when it is
+               broken over two lines ("12 March 2019 -" then "June 2020"), else a single date
   experience_type  from the institution (field_norm.experience_type)
 Parsed start and end go to the sidecar parsed_dates; raw text and provenance to the sidecar.
 When a field is not clear it stays empty.
@@ -62,10 +64,12 @@ from functools import lru_cache
 
 from resume_parser.field_norm import (
     _clean_segment,
+    continued_range,
     experience_type,
     find_dates,
     has_institution,
     parse_dates,
+    tidy_dates,
 )
 from resume_parser.schema import Method, MethodOutput, load_config
 
@@ -332,8 +336,15 @@ def parse_entry(lines: list[dict], kinds: list[str], columns: dict | None = None
         title = re.sub(r"\s+", " ", by_col["title"]).strip(" ,;:")
     found = None
     for want_range in (True, False):
-        for l in core:
+        for k, l in enumerate(core):
             d = find_dates(l["text"])
+            if d and want_range and k + 1 < len(core) and not (parse_dates(d[0], current_year)["end"] or
+                                                              parse_dates(d[0], current_year)["ongoing"]):
+                joined = continued_range(l["text"], d, core[k + 1]["text"])  # a range broken over two lines
+                if joined:
+                    found = (l, (joined[0], d[1], len(l["text"])))
+                    blanks[id(core[k + 1])].append((0, len(joined[1])))
+                    break
             if d and (not want_range or parse_dates(d[0], current_year)["end"] or
                       parse_dates(d[0], current_year)["ongoing"]):
                 found = (l, d)
@@ -341,7 +352,7 @@ def parse_entry(lines: list[dict], kinds: list[str], columns: dict | None = None
         if found:
             break
     if found:
-        dates = found[1][0].strip("() ")
+        dates = tidy_dates(found[1][0].strip("() "))
         blanks[id(found[0])].append((found[1][1], found[1][2]))
     if by_col.get("dates") and by_col.get("dates_end"):
         dates = f"{by_col['dates'].strip()} - {by_col['dates_end'].strip()}"

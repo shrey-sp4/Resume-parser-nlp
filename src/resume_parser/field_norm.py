@@ -210,25 +210,37 @@ _MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
 # a number followed by st/nd/rd/th (also "9 th", as some PDFs print it) is a day, never a year
 _ORDINAL = r"\s?(?:st|nd|rd|th)\b"
 _DAY = rf"\d{{1,2}}(?:{_ORDINAL})?"
-_POINT = (rf"(?:(?:(?<!\d){_DAY}\s+{_MONTH}[\s,.\-]*|{_MONTH}\s+{_DAY},?\s+|{_MONTH}[\s,.\-]*"
+# a whole month name or its usual short form, nothing longer ("2019 Mar", never "2019 Marketing")
+_MONTH_WORD = (r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?"
+               r"|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?(?![a-z])")
+_POINT = (rf"(?:(?<!\d)(?:19|20)\d{{2}}\s+{_MONTH_WORD}"  # year first: "2019 Jan"
+          rf"|(?:(?<!\d){_DAY}\s+{_MONTH}[\s,.\-]*|{_MONTH}\s+{_DAY},?\s+|{_MONTH}[\s,.\-]*"
           rf"|(?<!\d)\d{{1,2}}\s*[/.\-]\s*\d{{1,2}}\s*[/.\-]\s*|(?<!\d)\d{{1,2}}\s*[/.\-]\s*)?(?<!\d)(?:19|20)\d{{2}}(?!\d)"
           rf"|{_MONTH}\s*['’`]\s*\d{{2}}(?!\d)|(?<![A-Za-z]){_MONTH}\s+\d{{2}}(?![\d/:,]|{_ORDINAL})|['’`]\d{{2}}(?!\d))")
 _PRESENT = r"(?:present|current|till\s+date|till\s+now|to\s+date|todate|tilldate|date|now|ongoing|continuing|today)"
 _RANGE_SEP = r"\s*(?:-|–|—|−|~|\bto\b|\btill\b|\buntil\b)\s*"
 # a range ends in another point, a "Present"-style word, or two digits after a year ("2019-20")
+_ONWARDS = r"\s+onwards?\b"  # "July 2019 onwards": an open range
 DATE_SPAN = re.compile(rf"(?<![A-Za-z]){_POINT}(?:{_RANGE_SEP}(?:{_POINT}|{_PRESENT}\b"
-                       rf"|(?<=[-–—])\d{{2}}(?![\d/]|{_ORDINAL})))?", re.IGNORECASE)
+                       rf"|(?<=[-–—])\d{{2}}(?![\d/]|{_ORDINAL}))|{_ONWARDS})?", re.IGNORECASE)
 _POINT_ONLY = re.compile(rf"^{_POINT}$", re.IGNORECASE)
 _PRESENT_ONLY = re.compile(rf"^{_PRESENT}$", re.IGNORECASE)
+_SPLIT_ORDINAL = re.compile(r"(?<=\d)\s+(st|nd|rd|th)\b", re.IGNORECASE)
+
+
+def tidy_dates(printed: str) -> str:
+    """Dates as printed, except a day ordinal the PDF split from its number ("1 st" -> "1st")."""
+    return _SPLIT_ORDINAL.sub(r"\1", printed)
 
 
 def find_dates(text: str) -> tuple[str, int, int] | None:
-    """(dates as printed, start, end): the first date range, else the first single date with a
-    4-digit year or a month. A bare 2-digit number is never a date."""
+    """(dates as printed, start, end): the first date range (also "July 2019 onwards"), else the
+    first single date with a 4-digit year or a month. A bare 2-digit number is never a date."""
     best = None
     for m in DATE_SPAN.finditer(text):
         span = m.group(0).strip()
-        has_range = bool(re.search(_RANGE_SEP + r"\S", span, re.IGNORECASE)) and not _POINT_ONLY.match(span)
+        has_range = (bool(re.search(_RANGE_SEP + r"\S", span, re.IGNORECASE)) and not _POINT_ONLY.match(span)) \
+            or bool(re.search(_ONWARDS + "$", span, re.IGNORECASE))
         strong = has_range or YEAR.search(span) or re.match(_MONTH, span, re.IGNORECASE)
         if not strong:
             continue
@@ -237,6 +249,24 @@ def find_dates(text: str) -> tuple[str, int, int] | None:
         if best is None:
             best = (span, m.start(), m.start() + len(m.group(0).rstrip()))
     return best
+
+
+def continued_range(text: str, found: tuple[str, int, int], next_text: str) -> tuple[str, str] | None:
+    """A range broken over two lines: the line ends with the found single date and a range
+    separator (perhaps with a day: "12 March 2019 - 15"), and the next line starts with the end
+    ("June 2020", "Present"). Returns (the whole range as printed, the part taken from the next
+    line), else None."""
+    rest = text[found[2]:]
+    if not re.fullmatch(rf"{_RANGE_SEP}(?:{_DAY})?\s*", rest, re.IGNORECASE) or not re.search(r"\S", rest):
+        return None
+    head = re.match(rf"\s*(?:{_POINT}|{_PRESENT}\b)", next_text, re.IGNORECASE)
+    if not head:
+        return None
+    joined = (text[found[1]:].rstrip() + " " + head.group(0).strip()).strip()
+    m = DATE_SPAN.fullmatch(joined)
+    if not m or not re.search(_RANGE_SEP + r"\S", joined, re.IGNORECASE):
+        return None
+    return joined, head.group(0)
 
 
 def _parse_point(text: str, current_year: int) -> tuple[str | None, int | None]:
@@ -264,6 +294,10 @@ def parse_dates(printed: str, current_year: int) -> dict:
     """{"start", "end", "start_year", "end_year", "ongoing"} from dates as printed. "Present"-style
     ends give end None and ongoing True; a single date gives start only."""
     text = (printed or "").strip()
+    onwards = re.search(_ONWARDS + r"\s*$", text, re.IGNORECASE)
+    if onwards:  # "July 2019 onwards": started, still ongoing
+        start, start_year = _parse_point(text[: onwards.start()], current_year)
+        return {"start": start, "end": None, "start_year": start_year, "end_year": None, "ongoing": True}
     first = re.match(rf"^{_POINT}", text, re.IGNORECASE)  # "01-07-2019 - ..." : the whole first date
     if first and first.end() < len(text):
         sep = re.match(rf"^{_RANGE_SEP}", text[first.end():], re.IGNORECASE)

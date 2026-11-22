@@ -400,7 +400,32 @@ def test_ordinal_days_are_never_years():
                                 ("9th June, 2019 - 30th June, 2020", "2019-06", "2020-06"),
                                 ("June 30th, 2019 - Present", "2019-06", None)):
         data = _split([f"Lecturer, Hillcrest University, {printed}."])
-        assert data["entries"][0]["dates"] == printed
+        assert data["entries"][0]["dates"] == printed.replace(" th", "th")  # a split ordinal is joined
         parsed = parse_dates(printed, 2026)
         assert (parsed["start"], parsed["end"]) == (start, end), printed
     assert find_dates("2019-30th June")[0] == "2019"  # "30th" is a day, not the year 2030
+
+
+# ---------------------------------------------------------------- more date formats
+
+
+def test_more_date_formats():
+    cases = (("2019 Jan - 2020 Mar", "2019-01", "2020-03", False),
+             ("01/07/2019 onwards", "2019-07", None, True),
+             ("Jan. 2019 - Mar. 2020", "2019-01", "2020-03", False))
+    for printed, start, end, ongoing in cases:
+        assert find_dates(f"Lecturer, Hillcrest University, {printed}")[0] == printed
+        parsed = parse_dates(printed, 2026)
+        assert (parsed["start"], parsed["end"], parsed["ongoing"]) == (start, end, ongoing), printed
+    # a month word never inside a longer word
+    assert find_dates("2019 Marketing lead")[0] == "2019"
+
+
+def test_a_date_range_broken_over_two_lines_is_read_whole():
+    data = _split(["Lecturer, Hillcrest University, 12 March 2019 -", "June 2020"])
+    assert [e["dates"] for e in data["entries"]] == ["12 March 2019 - June 2020"]
+    data = _split(["Assistant Professor, Hillcrest University, Jul 2019 -", "Present"])
+    assert [e["dates"] for e in data["entries"]] == ["Jul 2019 - Present"]
+    # a line that does not end with a range separator is not joined
+    data = _split(["Lecturer, Hillcrest University, 12 March 2019", "June 2020 workshop"])
+    assert data["entries"][0]["dates"] == "12 March 2019"

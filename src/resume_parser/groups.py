@@ -6,12 +6,16 @@ results allowed). validation and test_frozen are guarded: aggregates only, every
 looked up in private/id_map.json, or matched against the GT stems).
 
 PDFs with no ground truth form a fourth group, "unlabelled".
+
+"final" is a separate set kept outside RESUME_DATA_DIR (resume_parser/final.py). It is never in
+_split.json, runs only on its own (cli run --groups final) and is aggregates only.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from resume_parser.final import FINAL_GROUP
 from resume_parser.schema import data_root, read_json, resume_id_for
 
 GT_GROUPS = ("dev", "tuned", "dev2", "validation", "test_frozen")
@@ -19,6 +23,7 @@ DEV_GROUPS = ("dev", "tuned", "dev2")
 GUARDED_GROUPS = ("validation", "test_frozen")
 LISTED_GROUPS = ("dev", "dev2", "validation", "test_frozen")  # the groups _split.json names
 ALL_GROUPS = GT_GROUPS + ("unlabelled",)
+AGGREGATE_ONLY_GROUPS = GUARDED_GROUPS + (FINAL_GROUP,)  # never shown or stored per resume
 SPLIT_FILE = "_split.json"
 
 
@@ -92,6 +97,9 @@ def group_of_stems(stems: list[str]) -> dict[str, str]:
 
 def parse_group_list(text: str) -> list[str]:
     names = [x.strip() for x in str(text).split(",") if x.strip()]
+    if FINAL_GROUP in names:
+        raise GroupError("final is not allowed here; it runs only on its own, with "
+                         "'python -m resume_parser.cli run --groups final'.")
     bad = [x for x in names if x not in ALL_GROUPS]
     if bad or not names:
         raise GroupError(f"--groups takes a comma list of {', '.join(ALL_GROUPS)}.")

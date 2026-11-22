@@ -10,6 +10,10 @@
                                                   the 4th run on a warning is printed
     python eval/evaluate.py --test-frozen         ALSO test_frozen, aggregates only, once;
                                                   a second run needs --allow-rerun "<reason>"
+    python eval/evaluate.py --final               ONLY the final set (outside RESUME_DATA_DIR,
+                                                  resume_parser/final.py), aggregates only, logged
+                                                  in RESUME_FINAL_OUT/final_runs.log; a second run
+                                                  needs --allow-rerun "<reason>"
 
 Ground truth: RESUME_DATA_DIR/ground_truth_v2/<stem>.json. Predictions: RESUME_DATA_DIR/outputs/
 <stem>.json, in the same format, so both are read with the same code. A missing prediction is
@@ -534,7 +538,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--fingerprint", action="store_true", help="print the evaluator hashes and exit")
     ap.add_argument("--validation", action="store_true", help="also score validation (aggregates only, logged)")
     ap.add_argument("--test-frozen", action="store_true", help="also score test_frozen (aggregates only, logged)")
-    ap.add_argument("--allow-rerun", metavar="REASON", help="written reason for a second test_frozen run")
+    ap.add_argument("--final", action="store_true", help="score only the final set (aggregates only, logged)")
+    ap.add_argument("--allow-rerun", metavar="REASON", help="written reason for a second test_frozen or final run")
     return ap
 
 
@@ -542,8 +547,12 @@ def run(a: argparse.Namespace) -> int:
     if a.fingerprint:
         print(json.dumps(fingerprint(), indent=1, sort_keys=True))
         return 0
+    if a.final:
+        if a.calibrate or a.json or a.validation or a.test_frozen:
+            raise EvalError("--final runs on its own (no --calibrate, --json, --validation or --test-frozen).")
+        return run_final(a)
     if a.allow_rerun is not None and not a.test_frozen:
-        raise EvalError("--allow-rerun only makes sense with --test-frozen.")
+        raise EvalError("--allow-rerun only makes sense with --test-frozen or --final.")
     json_path = None
     if a.json:
         # a relative path is taken inside the data folder; anything outside it is refused
@@ -582,6 +591,18 @@ def run(a: argparse.Namespace) -> int:
     return 0
 
 
+def run_final(a: argparse.Namespace) -> int:
+    """The final set only: logged before scoring, a second run refused without --allow-rerun,
+    aggregates only, nothing written."""
+    groups = common.final_groups()
+    common.log_final_run(TOOL, Path(__file__), settings(), a.allow_rerun)
+    common.use_final()
+    stems = groups[common.FINAL_GROUP]
+    res = aggregate([score_resume(load_gt(s), load_pred(s)) for s in stems])
+    print_group(common.FINAL_GROUP, res, None)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     a = build_parser().parse_args(argv)
     try:
@@ -589,6 +610,8 @@ def main(argv: list[str] | None = None) -> int:
     except (EvalError, DataDirError) as exc:
         print(f"evaluate: {exc}", file=sys.stderr)
         return 2
+    finally:
+        common.use_final(False)
 
 
 if __name__ == "__main__":

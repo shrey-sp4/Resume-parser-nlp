@@ -11,6 +11,10 @@ Everything is read from and written to RESUME_DATA_DIR only:
     reports/validation_runs.log      one JSON line per validation run (a warning from the 4th on)
     private/salt.txt, id_map.json    salt for eval IDs, and the map from IDs to file names
 
+The final set lives outside RESUME_DATA_DIR (resume_parser/final.py). use_final() points
+gt_dir, outputs_dir and stages_dir at its folders for one evaluate.py --final or funnel.py
+--final run; its log is RESUME_FINAL_OUT/final_runs.log.
+
 Two kinds of ID:
 - resume_id ("r_" + sha256(stem)[:8]) is the pipeline's ID. Console tables show it, so a row
   can be found in outputs/ and the sidecars.
@@ -26,12 +30,16 @@ import json
 import secrets
 from pathlib import Path
 
+from resume_parser import final as final_mod
 from resume_parser import groups as groups_mod
 from resume_parser.schema import CONFIG_DIR, data_root, read_json, require_inside_data_root, resume_id_for
 
 GROUPS = groups_mod.GT_GROUPS
 DEV_GROUPS = groups_mod.DEV_GROUPS
 GUARDED_GROUPS = groups_mod.GUARDED_GROUPS
+AGGREGATE_ONLY_GROUPS = groups_mod.AGGREGATE_ONLY_GROUPS  # guarded groups and final
+FINAL_GROUP = final_mod.FINAL_GROUP
+_FINAL = {"on": False}
 FROZEN_LOG = "test_frozen_runs.log"
 
 
@@ -42,12 +50,22 @@ class EvalError(RuntimeError):
 # ---------------------------------------------------------------- folders
 
 
+def use_final(on: bool = True) -> None:
+    """Point gt_dir, outputs_dir and stages_dir at the final folders for one final run; the
+    tools switch it off again when the run ends (use_final(False)), whatever happened."""
+    _FINAL["on"] = on
+
+
+def final_on() -> bool:
+    return _FINAL["on"]
+
+
 def gt_dir() -> Path:
-    return data_root() / "ground_truth_v2"
+    return final_mod.final_gt_dir() if _FINAL["on"] else data_root() / "ground_truth_v2"
 
 
 def outputs_dir() -> Path:
-    return data_root() / "outputs"
+    return final_mod.final_out() / "outputs" if _FINAL["on"] else data_root() / "outputs"
 
 
 def reports_dir() -> Path:
@@ -55,7 +73,22 @@ def reports_dir() -> Path:
 
 
 def stages_dir() -> Path:
-    return reports_dir() / "stages"
+    return final_mod.final_out() / "stages" if _FINAL["on"] else reports_dir() / "stages"
+
+
+def final_groups() -> dict[str, list[str]]:
+    """{"final": stems of the GT files directly inside RESUME_FINAL_GT}."""
+    try:
+        return {FINAL_GROUP: final_mod.final_stems()}
+    except final_mod.FinalError as exc:
+        raise EvalError(str(exc)) from None
+
+
+def log_final_run(tool: str, script_path: Path, settings: dict, rerun_reason: str | None) -> dict:
+    try:
+        return final_mod.log_final_run(tool, script_path, settings, rerun_reason)
+    except final_mod.FinalError as exc:
+        raise EvalError(str(exc)) from None
 
 
 def private_dir() -> Path:

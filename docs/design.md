@@ -652,6 +652,32 @@ evaluator's matching and field checks.
 - `funnel.py` runs on test_frozen once only, with no override.
 - test_frozen results are aggregates only.
 
+**The final set (never tuned on).** Ten fresh resumes, kept apart from everything used to build
+the parser, for one last honest estimate. Nothing (no rule, threshold, alias, method order or
+learned model) is ever chosen, changed or tuned on it, and it is never read during development.
+- It lives outside `RESUME_DATA_DIR` and outside the repo, in three folders named by environment
+  variables: `RESUME_FINAL_PDFS` (only `.pdf` files directly inside it are read),
+  `RESUME_FINAL_GT` (only `.json` files directly inside it, GT v2, each named like its PDF) and
+  `RESUME_FINAL_OUT` (`outputs/` with the main JSON, sidecars and `run_index.json`, `stages/`,
+  an aggregate `run_summary.json` with no list of resumes, and `final_runs.log`). Each folder
+  inside the repo or inside (or above) `RESUME_DATA_DIR` is refused. Resume IDs are the usual
+  ones; the private salt and ID map stay in `RESUME_DATA_DIR/private`.
+- Commands: `python -m resume_parser.cli validate-final` (counts of PDFs and GT files, GT files
+  whose `resume_file` names no PDF or that are not named like their PDF, GT files failing the GT
+  v2 schema; resume IDs only, never content; it does not run the pipeline and is not logged);
+  `python -m resume_parser.cli run --groups final`; `python eval/evaluate.py --final`;
+  `python eval/funnel.py --final`.
+- Guard, the strictest one: aggregates only (no per-resume rows, no loss ranking, no per-item
+  file); every run of those three tools appends a line to `final_runs.log` before it starts
+  (tool, run counter, UTC time, sha256 of the script, of the package code, of the settings and
+  of `config/thresholds.json`, and the rerun reason); a second run of a tool is refused unless
+  `--allow-rerun "<reason>"` is given, and the reason is logged.
+- Final runs only on its own: it can not be combined with another group, and it is never part
+  of the unknown-headings list, the review queue, threshold calibration, `check-determinism`,
+  `end_to_end.py` or any per-resume output or ranking.
+- `scripts/check_no_data.py` refuses any repo file holding a final-set stem or resume ID when
+  `RESUME_FINAL_GT` or `RESUME_FINAL_PDFS` is set.
+
 ## 7. Choosing thresholds
 
 In real use there is no ground truth, so decisions must come from label-free checks. To choose
@@ -703,6 +729,7 @@ resume-parser/
   schema/   resume.schema.json  meta.schema.json  run_index.schema.json  review_queue.schema.json
   src/resume_parser/
      intake.py  pipeline.py  cli.py  schema.py  groups.py  headings.py   (groups: data split; headings: aliases, content patterns)
+     final.py                                    (the final set: its folders, write check and run guard)
      report.py                                   (run summary, section 5.4)
      extract/  base.py  lines.py  source.py  pdfplumber_extractor.py  pdfminer_extractor.py  ocr_extractor.py
      clean.py  sections.py  normalize.py        (normalize.py builds the Canonical Document)
@@ -722,6 +749,7 @@ resume-parser/
   `pdfs/`, `ground_truth_v2/` (with `_split.json`), `outputs/`, `review_queue/`, `reports/`
   (with `stages/`, `funnel/`, `test_frozen_runs.log` and `validation_runs.log`), `private/`
   (salt and ID map), `models/` (learned readers, if saved).
+- The final set has its own three folders outside `RESUME_DATA_DIR` (section 6).
 - Back it up somewhere private. Git will not have a copy.
 - Guards: `.gitignore`, a pre-commit hook and a CI check (`scripts/check_no_data.py`) that
   refuse PDFs, JSON outside `config/`, `schema/`, `fixtures/` and `docs/`, any file larger than

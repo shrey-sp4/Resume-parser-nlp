@@ -8,6 +8,8 @@ Checks every tracked and staged file:
 - when RESUME_DATA_DIR is set: no resume ID or file stem of a guarded group (validation,
   test_frozen, from ground_truth_v2/_split.json) in file paths or text contents; the message
   never shows the value found
+- when RESUME_FINAL_GT or RESUME_FINAL_PDFS is set: the same for the final set (the stems of the
+  .json and .pdf files directly inside those folders, and their resume IDs)
 
 Usage:
     python scripts/check_no_data.py            tracked + staged files
@@ -42,25 +44,43 @@ def _is_binary(raw: bytes) -> bool:
 GUARDED_GROUPS = ("validation", "test_frozen")
 
 
+def _add_marker(markers: set[str], entry: str) -> None:
+    text = Path(str(entry).strip()).name
+    for suffix in (".json", ".pdf"):
+        if text.lower().endswith(suffix):
+            text = text[: -len(suffix)]
+    if text.startswith("r_"):
+        markers.add(text)
+    elif len(text) >= 6:  # a stem short enough to be a common word is not checked
+        markers.add(text)
+        markers.add("r_" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:8])
+
+
+def final_markers() -> set[str]:
+    """Stems and resume IDs of the final set: the .json files directly inside RESUME_FINAL_GT
+    and the .pdf files directly inside RESUME_FINAL_PDFS (empty when neither is set)."""
+    markers: set[str] = set()
+    for env, suffix in (("RESUME_FINAL_GT", ".json"), ("RESUME_FINAL_PDFS", ".pdf")):
+        folder = os.environ.get(env, "").strip()
+        if folder and Path(folder).is_dir():
+            for path in Path(folder).iterdir():
+                if path.is_file() and path.suffix.lower() == suffix:
+                    _add_marker(markers, path.name)
+    return markers
+
+
 def guarded_markers() -> set[str]:
-    """Resume IDs and file stems of the guarded groups, from RESUME_DATA_DIR (empty without it)."""
+    """Resume IDs and file stems of the guarded groups, from RESUME_DATA_DIR, and of the final
+    set (empty without them)."""
+    markers = final_markers()
     folder = os.environ.get("RESUME_DATA_DIR", "")
     split = Path(folder) / "ground_truth_v2" / "_split.json" if folder else None
     if split is None or not split.is_file():
-        return set()
+        return markers
     data = json.loads(split.read_text(encoding="utf-8"))
-    markers = set()
     for group in GUARDED_GROUPS:
         for entry in data.get(group, []):
-            text = Path(str(entry).strip()).name
-            for suffix in (".json", ".pdf"):
-                if text.lower().endswith(suffix):
-                    text = text[: -len(suffix)]
-            if text.startswith("r_"):
-                markers.add(text)
-            elif len(text) >= 6:  # a stem short enough to be a common word is not checked
-                markers.add(text)
-                markers.add("r_" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:8])
+            _add_marker(markers, entry)
     return markers
 
 

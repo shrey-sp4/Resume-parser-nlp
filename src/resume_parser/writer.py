@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from resume_parser.final import require_inside_output_root
 from resume_parser.pipeline import run_with_fallbacks
 from resume_parser.schema import (
     SCHEMA_VERSION,
@@ -214,7 +215,7 @@ def _write(path: Path, text: str) -> None:
 
 def write_resume(record: PipelineRecord, out_dir: Path) -> None:
     """Write the main JSON (when there is one) and the sidecar for one resume."""
-    out_dir = require_inside_data_root(out_dir)
+    out_dir = require_inside_output_root(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = Path(record.resume_file).stem
     main_path = out_dir / f"{stem}.json"
@@ -245,7 +246,7 @@ def build_index(out_dir: Path) -> dict:
 
 
 def write_index(out_dir: Path) -> dict:
-    out_dir = require_inside_data_root(out_dir)
+    out_dir = require_inside_output_root(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     index = _checked(build_index(out_dir), "run_index.schema.json")
     _write(out_dir / INDEX_FILE, dump_json(index, sort_keys=True))
@@ -336,7 +337,7 @@ def write_stage_files(record: PipelineRecord, stages_dir: Path) -> list[Path]:
     Files from an earlier run are removed first, so a resume that now stops earlier leaves
     no stale stage files behind. A stage that did not run gets no file.
     """
-    folder = require_inside_data_root(Path(stages_dir) / record.resume_id)
+    folder = require_inside_output_root(Path(stages_dir) / record.resume_id)
     folder.mkdir(parents=True, exist_ok=True)
     for name in (*STAGE_FILES.values(), METHODS_FILE):
         (folder / name).unlink(missing_ok=True)

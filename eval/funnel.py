@@ -4,6 +4,10 @@
     python eval/funnel.py --validation   ALSO validation, aggregates only; every run logged, a
                                          warning from the 4th run on
     python eval/funnel.py --test-frozen  ALSO test_frozen, aggregates only; ONCE ever
+    python eval/funnel.py --final        ONLY the final set (outside RESUME_DATA_DIR), aggregates
+                                         only, no ranking and no per-item file; logged in
+                                         RESUME_FINAL_OUT/final_runs.log; a second run needs
+                                         --allow-rerun "<reason>"
     python eval/funnel.py --lost-items   list the items lost at S1 (development groups only):
                                          resume ID, section, index, cause, recoverable_by
     python eval/funnel.py --lost-items --stage S4
@@ -670,8 +674,11 @@ def build_parser() -> argparse.ArgumentParser:
                       help="also validation, aggregates only; every run logged, a warning from the 4th")
     mode.add_argument("--test-frozen", action="store_true",
                       help="also test_frozen, aggregates only; allowed once, logged")
+    mode.add_argument("--final", action="store_true",
+                      help="only the final set, aggregates only; logged, a second run needs --allow-rerun")
     mode.add_argument("--lost-items", action="store_true",
                       help="list lost items for dev, tuned and dev2 (resume IDs only)")
+    ap.add_argument("--allow-rerun", metavar="REASON", help="with --final: run again; the reason is logged")
     ap.add_argument("--stage", choices=("S1", "S4", "S5"), default="S1",
                     help="with --lost-items: which funnel step (default S1)")
     return ap
@@ -695,9 +702,15 @@ def print_lost_items(results: dict, ids: dict, step: str = "S1") -> None:
 
 
 def run(a: argparse.Namespace) -> int:
-    groups = common.load_groups()
-    order = [g for g in common.DEV_GROUPS if groups[g]]
     warning = ""
+    if a.final:
+        groups = common.final_groups()
+        common.log_final_run(TOOL, Path(__file__), settings(), a.allow_rerun)
+        common.use_final()
+        order = [common.FINAL_GROUP]
+    else:
+        groups = common.load_groups()
+        order = [g for g in common.DEV_GROUPS if groups[g]]
     if a.validation:
         warning = common.log_validation_run(TOOL, Path(__file__), settings())["warning"]
         order.append("validation")
@@ -719,13 +732,13 @@ def run(a: argparse.Namespace) -> int:
             per_unit = (st["records"]["stage5"] or {}).get("per_unit") or {}
             methods5 += [(sec, (per_unit.get(sec) or {}).get("method_used") or "none")
                          for sec in ("personal", "education", "experience", "publications")]
-            if g not in common.GUARDED_GROUPS:  # never looked at per resume for guarded groups
+            if g not in common.AGGREGATE_ONLY_GROUPS:  # never looked at per resume for guarded groups
                 fired = load_checks(stem)
                 if fired is not None:
                     checks.append((fired, {(i["lost_at"], i["section"]) for i in it if i["lost_at"] != "ok"}))
         results[g] = {"items": items, "fps": fps, "incomplete": incomplete, "n": len(groups[g]),
                       "checks": checks, "stage5_methods": methods5}
-        if g not in common.GUARDED_GROUPS:
+        if g not in common.AGGREGATE_ONLY_GROUPS:
             out = common.reports_dir() / "funnel"
             common.write_text_inside(out / f"items_{g}.jsonl", _jsonl(items))
             common.write_text_inside(out / f"fps_{g}.jsonl", _jsonl(fps))
@@ -737,7 +750,7 @@ def run(a: argparse.Namespace) -> int:
         print(f"WARNING: {warning}\n")
     print("=== FUNNEL: where GT items are lost (first failing stage) ===")
     for g, r in results.items():
-        note = "  (aggregates only)" if g in common.GUARDED_GROUPS else ""
+        note = "  (aggregates only)" if g in common.AGGREGATE_ONLY_GROUPS else ""
         print(f"  {g}: {r['n']} resume(s){note}")
         if r["incomplete"]:
             print(f"    {r['incomplete']} resume(s) have no stage 1 or stage 4 file; "
@@ -749,15 +762,17 @@ def run(a: argparse.Namespace) -> int:
         cnt = {g: sum(1 for i in r["items"] if i["lost_at"] == "S1 text" and i["cause"] == cause)
                for g, r in results.items()}
         print(f"  {cause:<16}" + "".join(f"{cnt[g]:>12}" for g in results))
-    print("\n=== LARGEST LOSS POINTS (ranked by the development groups) ===")
-    print(f"  {'#':>3} {'section':<13}{'stage':<12}{'cause':<52}" + "".join(f"{g:>12}" for g in results))
-    ranked = loss_points(results, tuple(g for g in common.DEV_GROUPS if g in results))
-    for k, ((sec, st, cause), cnt) in enumerate(ranked[:15], 1):
-        print(f"  {k:>3} {sec:<13}{st:<12}{cause[:51]:<52}" + "".join(f"{cnt[g]:>12}" for g in results))
-    print("\n=== METHOD THAT HANDLED EACH LOST ITEM ===")
-    print(f"  {'section':<13}{'stage':<12}{'method':<52}" + "".join(f"{g:>12}" for g in results))
-    for (sec, st, method), cnt in method_counts(results):
-        print(f"  {sec:<13}{st:<12}{method[:51]:<52}" + "".join(f"{cnt[g]:>12}" for g in results))
+    ranked_by = tuple(g for g in common.DEV_GROUPS if g in results)
+    if ranked_by:  # the final set alone gets no ranking and no per-method list of lost items
+        print("\n=== LARGEST LOSS POINTS (ranked by the development groups) ===")
+        print(f"  {'#':>3} {'section':<13}{'stage':<12}{'cause':<52}" + "".join(f"{g:>12}" for g in results))
+        ranked = loss_points(results, ranked_by)
+        for k, ((sec, st, cause), cnt) in enumerate(ranked[:15], 1):
+            print(f"  {k:>3} {sec:<13}{st:<12}{cause[:51]:<52}" + "".join(f"{cnt[g]:>12}" for g in results))
+        print("\n=== METHOD THAT HANDLED EACH LOST ITEM ===")
+        print(f"  {'section':<13}{'stage':<12}{'method':<52}" + "".join(f"{g:>12}" for g in results))
+        for (sec, st, method), cnt in method_counts(results):
+            print(f"  {sec:<13}{st:<12}{method[:51]:<52}" + "".join(f"{cnt[g]:>12}" for g in results))
     print("\n=== ITEMS LOST AT S5, BY CAUSE ===")
     print(f"  {'section':<14}{'cause':<40}" + "".join(f"{g:>12}" for g in results))
     causes5 = sorted({(i["section"], i["cause"].split(":")[0]) for r in results.values() for i in r["items"]
@@ -777,12 +792,17 @@ def run(a: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    a = build_parser().parse_args(argv)
+    ap = build_parser()
+    a = ap.parse_args(argv)
+    if a.allow_rerun is not None and not a.final:
+        ap.error("--allow-rerun goes only with --final (test_frozen runs once, ever)")
     try:
         return run(a)
     except (EvalError, DataDirError) as exc:
         print(f"funnel: {exc}", file=sys.stderr)
         return 2
+    finally:
+        common.use_final(False)
 
 
 if __name__ == "__main__":

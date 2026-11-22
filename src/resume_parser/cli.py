@@ -7,6 +7,13 @@
                                               --groups picks GT groups (default dev,tuned,dev2;
                                               validation and test_frozen only when named, and
                                               then shown as counts only)
+    python -m resume_parser.cli run --groups final [--allow-rerun "<reason>"]
+                                              the final set (RESUME_FINAL_PDFS, written to
+                                              RESUME_FINAL_OUT; resume_parser/final.py): counts only,
+                                              logged, a second run refused without --allow-rerun
+    python -m resume_parser.cli validate-final
+                                              check the final folders (counts, names, GT v2
+                                              schema) without running the pipeline
     python -m resume_parser.cli validate-gt   check RESUME_DATA_DIR/ground_truth_v2/*.json
     python -m resume_parser.cli check-determinism [--groups]
                                               run the selected PDFs twice into
@@ -26,6 +33,7 @@ import sys
 from pathlib import Path
 
 from resume_parser import groups as groups_mod
+from resume_parser.final import FINAL_GROUP as FINAL
 from resume_parser.schema import DataDirError, data_root, read_json, resume_id_for, schema_errors
 
 DEFAULT_GROUPS = "dev,tuned,dev2"
@@ -44,6 +52,8 @@ def _select_by_group(pdfs: list[Path], groups_arg: str | None) -> tuple[list[tup
     (validation, test_frozen) runs only
     when named. Without one (no ground truth set up), every PDF runs and --groups is refused.
     """
+    if groups_arg is not None:
+        groups_mod.parse_group_list(groups_arg)  # names first: final is refused here, always
     if not groups_mod.has_split():
         if groups_arg is not None:
             raise groups_mod.GroupError("--groups needs ground_truth_v2/_split.json.")
@@ -75,6 +85,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         print("Pass --allow-stubs to run anyway (outputs are not real results).", file=sys.stderr)
         return 2
 
+    if args.groups is not None and FINAL in [x.strip() for x in args.groups.split(",")]:
+        return _run_final(args)
+    if args.allow_rerun is not None:
+        print("run: --allow-rerun is only for --groups final.", file=sys.stderr)
+        return 2
     root = data_root()
     if stubs:
         print(f"run: --allow-stubs given, {len(stubs)} method(s) are stubs", file=sys.stderr)
@@ -142,6 +157,85 @@ def cmd_run(args: argparse.Namespace) -> int:
         f"{summary['decisions']['NEEDS_REVIEW']} need review, {summary['decisions']['FAIL']} failed"
     )
     return 1 if errors else 0
+
+
+def _run_final(args: argparse.Namespace) -> int:
+    """cli run --groups final: the PDFs directly inside RESUME_FINAL_PDFS, written under
+    RESUME_FINAL_OUT (outputs, stage files, index, run summary). Logged first; a second run is
+    refused without --allow-rerun. Prints counts only; no review queue, no unknown headings."""
+    from resume_parser import final
+    from resume_parser.pipeline import run_pipeline
+    from resume_parser.report import build_run_summary
+    from resume_parser.writer import _write, dump_json, write_index, write_resume, write_stage_files
+
+    if args.groups.strip() != FINAL or args.pdf:
+        print("run: final runs on its own (--groups final, no other group and no single PDF).", file=sys.stderr)
+        return 2
+    try:
+        data_root()  # the private salt and ID map stay in RESUME_DATA_DIR
+        out, pdfs = final.final_out(), final.final_pdfs()
+        final.final_gt_dir()
+        final.log_final_run("cli_run", Path(__file__), {"stage_thresholds": "config/thresholds.json"},
+                            args.allow_rerun)
+    except final.FinalError as exc:
+        print(f"run: {exc}", file=sys.stderr)
+        return 2
+    errors = 0
+    for pdf in pdfs:
+        try:
+            record = run_pipeline(pdf)
+            write_resume(record, out / "outputs")
+            write_stage_files(record, out / "stages")
+        except Exception:  # counted, never shown per resume
+            errors += 1
+    write_index(out / "outputs")
+    summary = build_run_summary(out / "outputs")
+    summary.pop("flagged_resumes", None)  # aggregates only: no list of resumes
+    _write(final.require_inside_final_out(out / final.SUMMARY_FILE), dump_json(summary, sort_keys=True))
+    d = summary["decisions"]
+    print(f"final: {len(pdfs)} processed, {errors} error(s); {d['ACCEPT']} accepted, {d['NEEDS_REVIEW']} need review, "
+          f"{d['FAIL']} failed (aggregates only)")
+    return 1 if errors else 0
+
+
+def cmd_validate_final(args: argparse.Namespace) -> int:
+    """Check the final folders without running the pipeline: counts of PDFs and GT files, every
+    GT resume_file names a PDF of the folder and matches the GT file's own name, and every GT
+    file passes the GT v2 schema. Prints counts and resume IDs only, never content."""
+    from resume_parser import final
+
+    try:
+        pdfs, gts = final.final_pdfs(), final.final_gt_files()
+        final.final_out()
+    except final.FinalError as exc:
+        print(f"validate-final: {exc}", file=sys.stderr)
+        return 2
+    pdf_names = {p.name for p in pdfs}
+    no_pdf, wrong_name, invalid = [], [], []
+    named = set()
+    for path in gts:
+        rid = resume_id_for(path.name)
+        try:
+            gt = read_json(path)
+        except ValueError:
+            invalid.append(rid)
+            continue
+        if schema_errors(gt, "resume.schema.json"):
+            invalid.append(rid)
+        name = str(gt.get("resume_file") or "") if isinstance(gt, dict) else ""
+        if name not in pdf_names:
+            no_pdf.append(rid)
+        else:
+            named.add(name)
+            if Path(name).stem != path.stem:
+                wrong_name.append(rid)
+    without_gt = len(pdf_names - named)
+    print(f"validate-final: {len(pdfs)} PDF(s), {len(gts)} GT file(s)")
+    print(f"  GT files whose resume_file names no PDF in the folder: {len(no_pdf)}" + (f" ({', '.join(no_pdf)})" if no_pdf else ""))
+    print(f"  GT files not named like their PDF: {len(wrong_name)}" + (f" ({', '.join(wrong_name)})" if wrong_name else ""))
+    print(f"  GT files failing the GT v2 schema: {len(invalid)}" + (f" ({', '.join(invalid)})" if invalid else ""))
+    print(f"  PDFs with no GT file: {without_gt}")
+    return 1 if (no_pdf or wrong_name or invalid or without_gt) else 0
 
 
 def cmd_check_determinism(args: argparse.Namespace) -> int:
@@ -236,9 +330,14 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--groups",
         help="comma list of dev, tuned, dev2, validation, test_frozen, unlabelled (default "
-        "dev,tuned,dev2; validation and test_frozen run only when named, counts only)",
+        "dev,tuned,dev2; validation and test_frozen run only when named, counts only); or final "
+        "alone (the final set, counts only)",
     )
+    run.add_argument("--allow-rerun", metavar="REASON", help="with --groups final: run again; the reason is logged")
     run.set_defaults(func=cmd_run)
+
+    vf = sub.add_parser("validate-final", help="check the final folders without running the pipeline")
+    vf.set_defaults(func=cmd_validate_final)
 
     gt = sub.add_parser(
         "validate-gt",

@@ -440,6 +440,8 @@ def _empty(method: str) -> MethodOutput:
 
 
 def _groups_to_output(groups: list[list[int]], payload: dict, method: str) -> MethodOutput:
+    if payload.get("groups_only"):  # wrapped_entries: the grouping alone, no fields
+        return MethodOutput({"groups": groups})
     lines, params = payload["lines"], payload["params"]
     entries, sides, checks = [], [], []
     leftover = 0
@@ -630,3 +632,37 @@ def publications_payload(document: dict, params: dict) -> dict:
             lines.append(line)
             kinds.append(kind)
     return {"lines": lines, "kinds": kinds, "params": params, "stated_totals": totals}
+
+
+# ---------------------------------------------------------------- used by stage 4
+
+
+def wrapped_entries(lines: list[dict], params: dict) -> list[str]:
+    """The lines of one block joined into entries the way the publication splitters would join
+    them (markers, then hanging indent, then vertical gaps); one text per entry."""
+    payload = publications_payload({"sections": [{"name": "publications", "heading_raw": "", "lines": lines}]},
+                                   params)
+    payload["groups_only"] = True
+    for method in (marker_split, hanging_indent_split, paragraph_split):
+        out = method(payload)
+        if out.data is not None and out.data.get("groups"):
+            return [_join([payload["lines"][i]["text"] for i in g]) for g in out.data["groups"]]
+    return [_join([l["text"] for l in payload["lines"]])] if payload["lines"] else []
+
+
+def looks_like_citation(text: str, max_year: int, max_chars: int) -> bool:
+    """A plausible year plus an author-list start (a venue word alone is not enough), and no
+    longer than max_chars (a longer entry is several items run together)."""
+    clean = _MARKER.sub("", text, count=1).strip()
+    if len(clean) > max_chars or not any(1950 <= int(y) <= max_year for y in _YEAR.findall(clean)):
+        return False
+    return bool(_AUTHOR_START.match(clean)) or bool(_author_run(_comma_segments(clean)[:2]))
+
+
+def citation_share(lines: list[dict], params: dict) -> float:
+    """Share of the block's wrapped entries that look like citations."""
+    entries = wrapped_entries(lines, params)
+    if not entries:
+        return 0.0
+    max_year = params["current_year"] + params["year_max_offset"]
+    return sum(looks_like_citation(e, max_year, params["max_citation_chars"]) for e in entries) / len(entries)

@@ -96,9 +96,10 @@
     "content_min_share": 0.3
   },
   "stage4_normalize": {
-    "_comment": "Stage 4 heading mapping and document checks. To calibrate on dev. fuzzy_min is fuzz.ratio (0-100) on the whole normalised heading; leak_max is the share of target-looking lines allowed in other or unassigned.",
+    "_comment": "Stage 4 heading mapping and document checks. To calibrate on dev. fuzzy_min is fuzz.ratio (0-100) on the whole normalised heading; leak_max is the share of target-looking lines allowed in other or unassigned. citation_entry_min_share: share of a block's wrapped entries that must look like citations for content_guess to call it publications.",
     "fuzzy_min": 90,
-    "leak_max": 0.1
+    "leak_max": 0.1,
+    "citation_entry_min_share": 0.6
   },
   "stage5_entities": {
     "_comment": "Stage 5 settings. To calibrate on dev. current_year is set here (not read from the clock) so runs are reproducible; update it once a year. max_citation_chars: a publication entry longer than this is taken as several citations run together and fails its check; indent_tolerance_pt: how far right of the left margin a wrapped citation line must start for hanging_indent_split.",

@@ -217,7 +217,11 @@ always picks the same method.
   printed). Each line keeps its id, page and position, so provenance survives.
 - Methods, chosen per block: `exact_alias_map`; `fuzzy_alias_match` (`fuzz.ratio` of the
   whole normalised heading against every alias, at least `stage4_normalize.fuzzy_min` = 90);
-  `content_guess` (the block's dominant content, always WARN `section_from_content`);
+  `content_guess` (the block's dominant content by share of lines; when no kind reaches
+  `content_min_share`, the lines are joined into wrapped entries as the publication splitters do,
+  and the block becomes publications when at least `citation_entry_min_share` = 0.6 of the
+  entries have a plausible year plus an author-list start and are at most `max_citation_chars`
+  long, unless its heading is an alias of another section; always WARN `section_from_content`);
   `keep_as_other_with_warning` (the section is `other` with the original label and a WARN).
 - Checks: every cleaned line is in exactly one section (or `unassigned`); line order is kept;
   joining the canonical lines gives back the cleaned text (no loss, no duplication);

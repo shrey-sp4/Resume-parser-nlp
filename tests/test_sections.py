@@ -279,3 +279,57 @@ def test_education_table_with_a_header_row_stays_in_education(tmp_path):
 def test_two_column_table_cv_still_splits_at_row_headings(tmp_path):
     _stage3, stage4 = _run(synth.make_table_headings_pdf(tmp_path / "t.pdf"))
     assert [s["name"] for s in stage4.data["sections"]] == ["personal", "education", "experience"]
+
+
+# ---------------------------------------------------------------- content guess on wrapped entries
+
+
+def _block(heading, texts):
+    lines = [{"id": f"p001_l{i:04d}", "page": 1, "text": t, "bbox": [56 + (16 if i % 2 else 0), 100 + 14 * i, 500,
+              110 + 14 * i], "font_size": 10, "bold": 0.0, "in_table": False, "row_id": f"r{i}", "segment_index": 0}
+             for i, t in enumerate(texts)]
+    return {"block_id": "block_002", "heading_raw": heading, "heading_line": {"id": "h"}, "lines": lines}
+
+
+def _params():
+    t = load_thresholds()
+    return {**t["stage4_normalize"], "content_min_share": t["stage3_sections"]["content_min_share"],
+            "entry_params": t["stage5_entities"]}
+
+
+WRAPPED = ["1. M. Testwood, R. Doe, Modelling gene networks with",  # each citation wraps over two lines
+           "sparse graphs, Invented Letters 4, 2019.",
+           "2. J. Fakely, A. Roe, Thin films that do not exist in",
+           "any real lab, Invented Physics Letters 12, 2021.",
+           "3. L. Samplestone, Prices in an invented market and",
+           "its toy traders, Review of Fictional Economics, 2018."]
+
+
+def test_wrapped_citations_are_found_by_content():
+    from resume_parser.normalize import content_guess_method
+
+    block = _block("Things I Wrote Over The Years", WRAPPED)
+    out = content_guess_method((block, _params())).data
+    assert out is not None and out["name"] == "publications" and out["confidence"] >= 0.6
+
+
+def test_wrapped_citations_need_the_share_and_no_other_heading():
+    from resume_parser.normalize import content_guess_method
+
+    mixed = _block("Things I Wrote Over The Years", WRAPPED[:2] + ["Plain words about hobbies.", "More plain words.",
+                                                                  "Even more plain words here.", "And a last line."])
+    assert content_guess_method((mixed, _params())).data is None  # under 60% of entries are citations
+    other = _block("Work Experience", WRAPPED)  # the heading is an alias of another section
+    assert content_guess_method((other, _params())).data is None
+    # a year and a venue word without an author list is not enough (talks, events, ...)
+    # (each item wraps, so no single line looks like a citation and only the entry test decides)
+    events = _block("Things I Took Part In", ["1. Invited talk at the Toy Conference", "on Graphs in Fakeville, 2019.",
+                                              "2. Poster at the Placeholder Symposium", "held in Lakeside, 2020.",
+                                              "3. Panel at the Invented Journal day", "in Northfield, 2021."])
+    from resume_parser.headings import content_guess
+
+    assert content_guess(events["lines"], _params()["content_min_share"]) is None
+    assert content_guess_method((events, _params())).data is None
+    # an entry longer than max_citation_chars is several items run together, never one citation
+    long_one = _block("Things I Wrote Over The Years", ["M. Testwood, R. Doe, " + "a very long text " * 60 + "2019."])
+    assert content_guess_method((long_one, _params())).data is None

@@ -6,7 +6,13 @@ Each stage 3 block is one unit ("block_001", ...) and gets its own method choice
   fuzzy_alias_match           fuzz.ratio of the whole normalised heading against every alias
                               is at least fuzzy_min (thresholds.json)            confidence ratio/100
   content_guess               the block's content: citations -> publications, degree words ->
-                              education, date ranges -> experience; always WARN
+                              education, date ranges -> experience, by share of lines; when no
+                              kind reaches content_min_share, the lines are joined into wrapped
+                              entries (as the publication splitters do) and the block becomes
+                              publications when at least citation_entry_min_share of the entries
+                              look like citations (a plausible year plus an author-list start;
+                              an entry longer than max_citation_chars never counts), unless its
+                              heading is an alias of another section; always WARN
                               section_from_content                               confidence share
   keep_as_other_with_warning  "other", keeping the heading as original_name; always WARN
                               heading_kept_as_other                              confidence 0
@@ -73,12 +79,29 @@ def fuzzy_alias_match(payload) -> MethodOutput:
     return MethodOutput(_mapping(found[0], found[1], found[2] / 100, "fuzzy"))
 
 
+def _heading_maps_elsewhere(block: dict, p: dict) -> bool:
+    """The block's heading is an alias (exact, or fuzzy at fuzzy_min) of a section other than
+    publications."""
+    heading = block.get("heading_raw") or ""
+    if not heading:
+        return False
+    found = exact_alias(heading) or fuzzy_alias(heading, p["fuzzy_min"])
+    return bool(found) and found[0] != "publications"
+
+
 def content_guess_method(payload) -> MethodOutput:
     block, p = payload
     found = content_guess(block["lines"], p["content_min_share"])
-    if not found:
-        return MethodOutput(None)
-    return MethodOutput(_mapping(found[0], None, found[1], "content"))
+    if found:
+        return MethodOutput(_mapping(found[0], None, found[1], "content"))
+    # citations wrap over several lines, so a per-line count misses them: judge whole entries
+    if block["lines"] and not _heading_maps_elsewhere(block, p):
+        from resume_parser.entities.publications import citation_share
+
+        share = citation_share(block["lines"], p["entry_params"])
+        if share >= p["citation_entry_min_share"]:
+            return MethodOutput(_mapping("publications", None, share, "content"))
+    return MethodOutput(None)
 
 
 def keep_as_other_with_warning(payload) -> MethodOutput:
@@ -155,7 +178,8 @@ def document_reasons(document: dict, stage2_lines: list[dict], p: dict) -> list[
 
 def run_normalize(pdf_path: Path, ctx: Context) -> StageResult:
     p = {**ctx.thresholds["stage4_normalize"],
-         "content_min_share": ctx.thresholds["stage3_sections"]["content_min_share"]}
+         "content_min_share": ctx.thresholds["stage3_sections"]["content_min_share"],
+         "entry_params": ctx.thresholds["stage5_entities"]}
     stage3 = ctx.results["stage3"].data or {}
     blocks = stage3.get("blocks") or []
     units = [Unit(b["block_id"], (b, p), section=None) for b in blocks]

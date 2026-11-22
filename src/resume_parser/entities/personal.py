@@ -3,12 +3,19 @@
 Name methods, in order:
   top_lines       the first lines of every personal section in order, then the top lines of
                   page 1 (headings included), until a valid name is found. Each line is cut at
-                  the first email, phone, URL, pipe, bullet or contact word; a "Name:" label,
-                  leading honorifics and trailing degrees and commas are removed. What is left
+                  the first email, phone, URL, pipe, bullet or contact word, and then at the
+                  first comma or a dash standing between spaces (so "Name, Ph.D." keeps the name;
+                  "Surname, Firstname" leaves only the surname, which is never a valid name); the
+                  line is still rejected when the part after the cut holds a digit, an
+                  institution, an organisation or an address word; a
+                  "Name:" label, leading honorifics and trailing degrees are removed. What is left
                   is never a name when it holds an institution keyword or known institution, an
                   organisation word (department, faculty, centre, laboratory, ...), a
                   section-heading alias, an address word, a degree word or a digit, or only CV
-                  words ("curriculum vitae", "resume", "cv", "biodata"). A name is 2 to 5 words
+                  words ("curriculum vitae", "resume", "cv", "biodata"). Leading initials
+                  followed by a capitalised word ("M. A. Khan") are not read as a degree, but only
+                  on a line that is bold or in the largest font of its page; on any other line
+                  they still count as a degree ("M. A. English"). A name is 2 to 5 words
                   (initials with or without dots; hyphens and apostrophes inside words), in title
                   case or capitals, or in any case when the line is bold or has the largest font
                   on page 1 among the lines that pass the other rules. A name split over two
@@ -30,11 +37,12 @@ apostrophes) plus 0.5 when an email or phone was found.
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from pathlib import Path
 
 from resume_parser.field_norm import find_degree, has_institution
 from resume_parser.headings import alias_index
-from resume_parser.schema import Method, MethodOutput
+from resume_parser.schema import Method, MethodOutput, load_config
 
 EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 PHONE = re.compile(r"(?<![\w/])\+?\(?\d[\d\s().\-]{8,}\d(?![\w/])")
@@ -53,6 +61,12 @@ CUT = re.compile(
     r"[A-Za-z0-9._%+\-]+@|(?:https?://|www\.)|\+?\(?\d[\d\s().\-]{8,}\d|[|•·▪●◦■►]|"
     r"\b(?:e-?mail|phone|mobile|mob|tel|telephone|contact|address|ph)\b",
     re.IGNORECASE)
+# the name part ends at the first comma or at a dash standing between spaces
+NAME_END = re.compile(r",|\s[-–—]\s")
+# one to three initials at the start, followed by a capitalised word: "M. A. Khan", "M.A. Khan"
+LEAD_INITIALS = re.compile(r"^(?:[A-Z]\.\s?){1,3}(?=[A-Z][a-z])")
+# words that join a job title and are ignored when checking whether a name is only a job title
+TITLE_JOINERS = {"of", "and", "in", "the", "for", "at"}
 ORG_WORDS = re.compile(r"\b(?:department|dept|faculty|centre|center|laboratory|lab|division|office|group)\b",
                        re.IGNORECASE)
 WORD = re.compile(r"^[^\W\d_]+(?:[.'\-][^\W\d_]+)*\.?$")
@@ -119,18 +133,50 @@ def _has_alias(text: str) -> bool:
     return any(" ".join(words[i:j]) in index for i in range(len(words)) for j in range(i + 1, min(len(words), i + 4) + 1))
 
 
-def candidate_text(raw: str) -> str | None:
-    """The cleaned name part of a line, or None when the line can never hold the name."""
+def candidate_text(raw: str, initials_ok: bool = False) -> str | None:
+    """The cleaned name part of a line, or None when the line can never hold the name.
+    initials_ok: the line is bold or in the largest font of its page, so leading initials
+    followed by a capitalised word are part of the name and not a degree."""
     m = CUT.search(raw)
     text = raw[: m.start()] if m else raw
+    m = NAME_END.search(text)
+    if m and m.start() > 0:
+        tail = text[m.start():]
+        # what follows the name may be degrees or titles, but a line whose rest holds a digit,
+        # an institution, an organisation or an address word ("Assistant Professor, X University,
+        # 2023") is still not a name line, as before the cut
+        if (any(ch.isdigit() for ch in tail) or has_institution(tail) or ORG_WORDS.search(tail)
+                or ADDRESS_WORDS.search(tail)):
+            return None
+        text = text[: m.start()]
     text = clean_name(text).strip(" ,;:-")
     if not text or not CV_WORDS.sub("", text).strip(" ,;:-"):
         return None  # empty, or only CV words
+    degree_text = text
+    if initials_ok and (lead := LEAD_INITIALS.match(text)):
+        degree_text = text[lead.end():]
     if (any(ch.isdigit() for ch in text) or has_institution(text) or ADDRESS_WORDS.search(text)
-            or find_degree(text) or find_degree(text, include_school=True) or _has_alias(text)
+            or find_degree(degree_text) or find_degree(degree_text, include_school=True) or _has_alias(text)
             or CV_WORDS.search(text) or ORG_WORDS.search(text)):
         return None
     return text
+
+
+@lru_cache(maxsize=1)
+def _job_title_words() -> frozenset[str]:
+    cfg = load_config("titles.json")
+    words = set()
+    for key in ("prefixes", "academic", "industry", "other"):
+        for title in cfg.get(key, []):
+            words |= set(re.findall(r"[^\W\d_]+", title.lower()))
+    return frozenset(words - TITLE_JOINERS)
+
+
+def is_job_title_only(name: str) -> bool:
+    """Every word of the name is a word of a job title in config/titles.json
+    ("Assistant Professor"); joining words such as "of" are ignored."""
+    words = [w for w in re.findall(r"[^\W\d_]+", name.lower()) if w not in TITLE_JOINERS]
+    return bool(words) and all(w in _job_title_words() for w in words)
 
 
 def _title_or_caps(text: str) -> bool:
@@ -139,8 +185,18 @@ def _title_or_caps(text: str) -> bool:
     return capped >= len(words) - (1 if len(words) > 2 else 0)
 
 
-def _candidates(lines: list[dict]) -> list[tuple[dict, str]]:
-    return [(line, c) for line in lines if (c := candidate_text(line["text"])) is not None]
+def _candidates(lines: list[dict], page_font: dict[int, float] | None = None,
+                bold_min: float = 1.1) -> list[tuple[dict, str]]:
+    """(line, name part) for every line that can hold the name. page_font gives the largest
+    font per page; a bold line or one in that font may start with initials."""
+    page_font = page_font or {}
+    out = []
+    for line in lines:
+        styled = (line.get("bold") or 0) >= bold_min or bool(
+            page_font.get(line["page"]) and (line.get("font_size") or 0) >= page_font[line["page"]])
+        if (c := candidate_text(line["text"], initials_ok=styled)) is not None:
+            out.append((line, c))
+    return out
 
 
 def _pick(cands: list[tuple[dict, str]], max_font: float, bold_min: float):
@@ -160,11 +216,14 @@ def _pick(cands: list[tuple[dict, str]], max_font: float, bold_min: float):
 
 def name_from_top_lines(payload) -> MethodOutput:
     top = payload["params"]["name_top_lines"]
-    page1 = _candidates(payload["page1_lines"][:top])
-    max_font = max((line.get("font_size") or 0 for line, _ in page1), default=0)
     bold_min = payload["params"].get("name_bold_min", 0.6)
+    page_font: dict[int, float] = {}
+    for line in [*(x for s in payload["personal_sections"] for x in s), *payload["page1_lines"]]:
+        page_font[line["page"]] = max(page_font.get(line["page"], 0), line.get("font_size") or 0)
+    page1 = _candidates(payload["page1_lines"][:top], page_font, bold_min)
+    max_font = max((line.get("font_size") or 0 for line, _ in page1), default=0)
     for lines in [*payload["personal_sections"], payload["page1_lines"]]:
-        found = _pick(_candidates(lines[:top]), max_font, bold_min)
+        found = _pick(_candidates(lines[:top], page_font, bold_min), max_font, bold_min)
         if found:
             name, used = found
             return MethodOutput(dict(payload["common"], candidate_name=name,

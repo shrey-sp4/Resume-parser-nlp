@@ -140,6 +140,11 @@ def test_rule_each_review_reason():
     assert _codes(_ctx(entries={"education": 0})) == ("NEEDS_REVIEW", ["no_entries:education"])
 
 
+def test_rule_name_is_job_title():
+    assert _codes(_ctx(name="Assistant Professor")) == ("NEEDS_REVIEW", ["name_is_job_title"])
+    assert _codes(_ctx(name="Mira Testwood")) == ("ACCEPT", [])
+
+
 def test_rule_empty_name_fails():
     assert _codes(_ctx(name="")) == ("FAIL", ["empty_name"])
 

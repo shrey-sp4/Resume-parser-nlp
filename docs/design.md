@@ -274,11 +274,16 @@ Canonical Document (sketch; each section also has `block_id` and `heading_line`)
 
 **Personal** (built). Name methods, in order: `top_lines` (every personal section in order,
 then the top lines of page 1, until a valid name is found; each line is cut at the first email,
-phone, URL, pipe, bullet or contact word, and a "Name:" label, honorifics such as Dr., Prof.,
-Shri, Smt. and trailing degrees are removed, as in the ground truth, where no name keeps an
-honorific; what is left is never a name when it holds an institution word or known
+phone, URL, pipe, bullet or contact word, and then at the first comma or a dash standing between
+spaces ("Name, Ph.D." keeps the name; "Surname, Firstname" leaves a one-word surname, which is
+never a name), unless the part after that cut holds a digit, an institution, an organisation or
+an address word, in which case the line is still rejected; a "Name:" label, honorifics such as
+Dr., Prof., Shri, Smt. and trailing degrees are removed, as in the ground truth, where no name
+keeps an honorific; what is left is never a name when it holds an institution word or known
 institution, an organisation word such as department or faculty, a section-heading alias, an
-address word, a degree word, a digit, or only CV words; a name is 2 to 5 words, initials with
+address word, a degree word, a digit, or only CV words (leading initials followed by a
+capitalised word, as in "M. A. Khan", are not a degree on a line that is bold or in the largest
+font of its page; on other lines they still are); a name is 2 to 5 words, initials with
 or without dots, in title case or capitals, or in any case when the line is bold or has the
 largest font on page 1 among the lines that pass the other rules; a name split over two short
 one-word lines is joined),
@@ -415,7 +420,9 @@ stored in the sidecar file.
     JSON is still written)
   - **NEEDS_REVIEW**: `missing_section:<s>` (not for the name), `low_score:<s>` (below
     `section_score_threshold`), `whole_section_one_entry:<s>`, `name_from_email`,
-    `name_from_file_name`, `no_entries:<s>` (the section has lines but no entry; never silent);
+    `name_from_file_name`, `name_is_job_title` (every word of the name is a job-title word from
+    `config/titles.json`, joining words such as "of" ignored; label-free),
+    `no_entries:<s>` (the section has lines but no entry; never silent);
     also `main_json_invalid` from stage 7
   - **ACCEPT** otherwise. Flags from earlier stages stay in the sidecar but do not decide alone.
 - Stage 6 is OK for ACCEPT, WARN for NEEDS_REVIEW, FAIL for FAIL; its reasons become flags.

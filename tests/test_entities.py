@@ -8,7 +8,7 @@ import make_synthetic_resumes as synth
 from make_synthetic_resumes import EXP_LINES, PERSONAL_TOP
 from resume_parser.cli import main as cli_main
 from resume_parser.entities import education as edu
-from resume_parser.entities.personal import clean_name, find_contacts, valid_name
+from resume_parser.entities.personal import candidate_text, clean_name, find_contacts, is_job_title_only, valid_name
 from resume_parser.pipeline import default_stages, run_pipeline
 from resume_parser.schema import load_thresholds, schema_errors
 from test_sections import EDU_TABLE
@@ -135,6 +135,44 @@ def test_honorifics_and_trailing_degrees_are_removed():
     assert clean_name("Prof. (Dr.) Mira Testwood, Ph.D.") == "Mira Testwood"
     assert clean_name("Name: Jonas Fakely") == "Jonas Fakely"
     assert valid_name("Mira A. Testwood") and not valid_name("Mira") and not valid_name("Mira Testwood 2")
+
+
+def test_name_part_ends_at_a_comma_or_a_spaced_dash():
+    assert candidate_text("Mira Testwood, Ph.D.") == "Mira Testwood"
+    assert candidate_text("Dr. Mira Testwood, FRSC") == "Mira Testwood"
+    assert candidate_text("Mira Testwood - Assistant Professor") == "Mira Testwood"
+    assert candidate_text("Mira-Jo Testwood") == "Mira-Jo Testwood"  # a hyphen inside a word is kept
+    # a job line is still not a name line when its rest holds an institution or a date
+    assert candidate_text("Assistant Professor, Hillcrest University, Jul 2023 - Present") is None
+    # "Surname, Firstname": only the surname is left, and one word is never a valid name, so the
+    # name has to come from another line or a fallback method
+    assert candidate_text("Testwood, Mira") == "Testwood" and not valid_name("Testwood")
+
+
+def test_leading_initials_are_a_name_only_on_a_bold_or_largest_line():
+    assert candidate_text("M. A. Testwood", initials_ok=True) == "M. A. Testwood"
+    assert candidate_text("M. A. Testwood") is None  # a plain line: read as the degree M.A.
+    assert candidate_text("M. A. English") is None
+
+
+def test_initials_first_name_in_bold_is_taken(tmp_path):
+    lines = [("name", "M. A. Testwood"), ("contact", "mira.testwood@example.org"),
+             ("heading", "EDUCATION"), ("body", "Ph.D. in Physics, Westbrook University, 2019")]
+    stage5 = _stage5(synth.make_lines_pdf(tmp_path / "initials.pdf", lines))
+    assert stage5.data["personal"]["candidate_name"] == "M. A. Testwood"
+    assert stage5.per_unit["personal"].method_used == "top_lines"
+
+
+def test_degree_line_in_the_top_lines_is_not_a_name(tmp_path):
+    lines = [("body", "M. A. English"), ("name", "Mira Testwood"), ("contact", "mira.testwood@example.org"),
+             ("heading", "EDUCATION"), ("body", "Ph.D. in Physics, Westbrook University, 2019")]
+    stage5 = _stage5(synth.make_lines_pdf(tmp_path / "degree_top.pdf", lines))
+    assert stage5.data["personal"]["candidate_name"] == "Mira Testwood"
+
+
+def test_job_title_only_names():
+    assert is_job_title_only("Assistant Professor") and is_job_title_only("Senior Research Fellow")
+    assert not is_job_title_only("Mira Testwood") and not is_job_title_only("Professor of Physics")
 
 
 def test_name_split_over_two_lines(tmp_path):

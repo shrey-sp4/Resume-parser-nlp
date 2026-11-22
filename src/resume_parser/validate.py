@@ -10,6 +10,8 @@ publications) and is never silent:
                   low_score:<s>                section score below section_score_threshold[s]
                   whole_section_one_entry:<s>  stage 5 fell back to one entry for the section
                   name_from_email, name_from_file_name   the name came from a fallback
+                  name_is_job_title            every word of the name is a job-title word
+                                               (config/titles.json), e.g. "Assistant Professor"
                   no_entries:<s>               the section has lines but no entry
   ACCEPT        otherwise
 Flags from earlier stages stay in the sidecar but do not decide on their own. Section scores
@@ -29,6 +31,7 @@ from resume_parser.schema import (
     StageResult,
     Status,
 )
+from resume_parser.entities.personal import is_job_title_only
 from resume_parser.scoring import found_sections, section_scores
 
 ENTRY_SECTIONS = ("education", "experience", "publications")
@@ -50,8 +53,11 @@ def decide(ctx: Context) -> tuple[str, list[Reason], dict]:
     reasons: list[Reason] = []
 
     personal = data.get("personal") if isinstance(data.get("personal"), dict) else {}
-    if not (personal.get("candidate_name") or "").strip():
+    name = (personal.get("candidate_name") or "").strip()
+    if not name:
         reasons.append(Reason("empty_name", "", "personal"))
+    elif is_job_title_only(name):
+        reasons.append(Reason("name_is_job_title", "", "personal"))
     name_method = units["personal"].method_used if "personal" in units else None
     if name_method in ("from_email", "from_file_name"):
         reasons.append(Reason(f"name_{name_method}", "", "personal"))

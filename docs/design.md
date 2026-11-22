@@ -681,6 +681,18 @@ section; items lost by step; the check-validity table for every stage; the decis
 decision, how many resumes have a real loss. The thresholds were chosen on the same resumes, so
 that last table is optimistic.
 
+**Learned publication-field reader (experimental, not in the pipeline).**
+`src/resume_parser/learn/pub_reader.py` reads title, venue, year and type from a stage 5
+publication entry (the splitting stays rule-based) with scikit-learn (optional `learn` extra):
+a token tagger (DictVectorizer + logistic regression over AUTHOR, TITLE, VENUE, YEAR, OTHER) and
+an entry type classifier. Features are shapes only (token shape, length, position, neighbour
+shapes, punctuation counts, quote and bracket flags, bold, membership flags from
+`config/publications.json`), never words, so a model holds no personal data. Weak labels come
+from GT publications the rules match (GT title and venue found as token spans by fuzzy match, GT
+year as equal tokens). `eval/pub_reader_loo.py` compares rules, learned and "learned when its
+confidence is at least t, else rules" with leave-one-resume-out over the development groups,
+judged with evaluate.py's rules. Models are written only to `RESUME_DATA_DIR/models/`.
+
 ## 8. Repo layout
 
 ```
@@ -696,7 +708,8 @@ resume-parser/
      clean.py  sections.py  normalize.py        (normalize.py builds the Canonical Document)
      entities/ personal.py  education.py  experience.py  publications.py
      field_norm.py  validate.py  scoring.py  writer.py   (writer.py writes main JSON + sidecar + index + review queue)
-  eval/     common.py  evaluate.py  funnel.py  calibrate_thresholds.py  end_to_end.py   (common.py: groups, IDs, validation and test_frozen guards)
+     learn/    pub_reader.py                    (experimental learned publication fields; not used by any stage)
+  eval/     common.py  evaluate.py  funnel.py  calibrate_thresholds.py  end_to_end.py  pub_reader_loo.py   (common.py: groups, IDs, validation and test_frozen guards)
   fixtures/ synthetic/   (fake resumes, built by a script)
   tests/    one test file per stage, plus determinism
   scripts/  check_no_data.py  make_synthetic_resumes.py
@@ -708,7 +721,7 @@ resume-parser/
 - A folder on each person's computer, set by environment variable `RESUME_DATA_DIR`:
   `pdfs/`, `ground_truth_v2/` (with `_split.json`), `outputs/`, `review_queue/`, `reports/`
   (with `stages/`, `funnel/`, `test_frozen_runs.log` and `validation_runs.log`), `private/`
-  (salt and ID map).
+  (salt and ID map), `models/` (learned readers, if saved).
 - Back it up somewhere private. Git will not have a copy.
 - Guards: `.gitignore`, a pre-commit hook and a CI check (`scripts/check_no_data.py`) that
   refuse PDFs, JSON outside `config/`, `schema/`, `fixtures/` and `docs/`, any file larger than

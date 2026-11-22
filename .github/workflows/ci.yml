@@ -16,7 +16,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install -r requirements.txt
-          python -m pip install -e . --no-deps
+          python -m pip install -e ".[learn]"  # the package plus scikit-learn==1.9.1 (learn extra)
       - name: No data in the repo
         run: python scripts/check_no_data.py
       - name: Tests

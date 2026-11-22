@@ -24,6 +24,10 @@ test = [
     "reportlab==4.4.4",
     "pillow==13.0.0",
 ]
+# the experimental learned publication reader (src/resume_parser/learn) and its tests
+learn = [
+    "scikit-learn==1.9.1",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

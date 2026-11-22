@@ -524,11 +524,16 @@ Two tools in `eval/`, both read-only. They never run the parser and never edit g
 They read from and write to `RESUME_DATA_DIR` only. Console output shows resume IDs and counts,
 never names.
 
-**Groups.** `ground_truth_v2/_split.json` lists **dev** (15, used for building) and
-**test_frozen** (15, scored once at the end, aggregates only). **tuned** is every other GT
-file (the first 10). Entries in the split may be stems, file names or resume IDs (looked up
-in `private/id_map.json`). `cli run --groups` uses the same split: the default is
-`dev,tuned`; test_frozen is processed only when named, and is then never shown per resume.
+**Groups.** `ground_truth_v2/_split.json` lists **dev** (15), **dev2** (5) and **validation**
+(10); **tuned** is every other GT file (the first 10). dev, tuned and dev2 are development
+groups: per-resume results are allowed. The original 15 test_frozen resumes were scored once
+(aggregates only, logged in `reports/test_frozen_runs.log`) and then re-split with seed 0 into
+validation (10) and dev2 (5); the old split is kept as `_split_before_validation.json`. Because
+of that one earlier aggregate run, validation is not a completely unseen holdout.
+`test_frozen` stays a supported (now empty) group with its own guard. Entries in the split may
+be stems, file names or resume IDs (looked up in `private/id_map.json`). `cli run --groups`
+uses the same split: the default is `dev,tuned,dev2`; validation and test_frozen are processed
+only when named, and are then shown as counts only and never put in the unknown-headings file.
 PDFs without ground truth are the group `unlabelled`.
 
 **IDs.** Console tables show the pipeline's `resume_id`. Files written by `eval/` (`--json`
@@ -556,7 +561,7 @@ example, a resume that stopped at stage 1) is scored as empty.
 - Empty GT fields are skipped and counted. "Predicted although GT is empty" is reported, never
   scored. Predicted publication counts are compared with GT `stated_totals`.
 - 95% percentile bootstrap CIs over resumes (10,000 samples, fixed seed 0).
-- Per-resume rows are shown only for dev and tuned.
+- Per-resume rows are shown only for the development groups (dev, tuned, dev2).
 
 **`eval/funnel.py`**: for every GT item, finds the first stage where it is lost. It reads the
 stage files saved by `cli run --save-stages` (below) and the predictions, and uses the
@@ -617,6 +622,17 @@ evaluator's matching and field checks.
 - They hold resume text, so they are written only inside the data folder. Files from an earlier
   run are removed first.
 
+**validation guard.** Neither tool touches validation unless it is given `--validation`.
+- Every run appends one line to `reports/validation_runs.log` (tool, run counter per tool, UTC
+  time, the same hashes as below) and is never refused.
+- From the 4th run of a tool on, the log line and every report of that run carry the warning
+  "validation has been used N times; results are no longer a fair estimate".
+- validation results are aggregates only: no per-resume rows, no per-item or false-positive
+  files, never in `--lost-items`, loss rankings, check validity, `end_to_end.py`,
+  `calibrate_thresholds.py` or `cli check-determinism`.
+- `scripts/check_no_data.py` (with `RESUME_DATA_DIR` set) refuses any repo file that holds a
+  resume ID or file stem of validation or test_frozen, without printing it.
+
 **test_frozen guard.** Neither tool touches test_frozen unless it is given `--test-frozen`.
 - Before scoring, a run appends one line to `reports/test_frozen_runs.log`:
   - tool name
@@ -652,7 +668,7 @@ Report: of the accepted resumes, how many are fully correct; and what share go t
   the best catch rate, and the report says so. Leave-one-resume-out shows how stable the choice
   is. 25 resumes is a small sample.
 
-**`eval/end_to_end.py`** (dev and tuned): name, education, experience and publications P/R/F1
+**`eval/end_to_end.py`** (development groups): name, education, experience and publications P/R/F1
 with 95% CIs (name: P = right names / names given, R = right names / GT names); the funnel per
 section; items lost by step; the check-validity table for every stage; the decisions and, per
 decision, how many resumes have a real loss. The thresholds were chosen on the same resumes, so
@@ -673,7 +689,7 @@ resume-parser/
      clean.py  sections.py  normalize.py        (normalize.py builds the Canonical Document)
      entities/ personal.py  education.py  experience.py  publications.py
      field_norm.py  validate.py  scoring.py  writer.py   (writer.py writes main JSON + sidecar + index + review queue)
-  eval/     common.py  evaluate.py  funnel.py  calibrate_thresholds.py  end_to_end.py   (common.py: groups, IDs, test_frozen guard)
+  eval/     common.py  evaluate.py  funnel.py  calibrate_thresholds.py  end_to_end.py   (common.py: groups, IDs, validation and test_frozen guards)
   fixtures/ synthetic/   (fake resumes, built by a script)
   tests/    one test file per stage, plus determinism
   scripts/  check_no_data.py  make_synthetic_resumes.py
@@ -684,7 +700,8 @@ resume-parser/
 
 - A folder on each person's computer, set by environment variable `RESUME_DATA_DIR`:
   `pdfs/`, `ground_truth_v2/` (with `_split.json`), `outputs/`, `review_queue/`, `reports/`
-  (with `stages/`, `funnel/` and `test_frozen_runs.log`), `private/` (salt and ID map).
+  (with `stages/`, `funnel/`, `test_frozen_runs.log` and `validation_runs.log`), `private/`
+  (salt and ID map).
 - Back it up somewhere private. Git will not have a copy.
 - Guards: `.gitignore`, a pre-commit hook and a CI check (`scripts/check_no_data.py`) that
   refuse PDFs, JSON outside `config/`, `schema/`, `fixtures/` and `docs/`, any file larger than

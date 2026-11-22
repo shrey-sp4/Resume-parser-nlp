@@ -1,6 +1,7 @@
-"""End-to-end report for dev and tuned (never test_frozen), from the files a run leaves behind.
+"""End-to-end report for the development groups dev, tuned and dev2 (never validation or
+test_frozen), from the files a run leaves behind.
 
-    python -m resume_parser.cli run --groups dev,tuned --save-stages
+    python -m resume_parser.cli run --groups dev,tuned,dev2 --save-stages
     python eval/funnel.py
     python eval/end_to_end.py
 
@@ -32,7 +33,7 @@ import evaluate as ev
 import funnel
 from resume_parser.schema import read_json, resume_id_for
 
-GROUPS = ("dev", "tuned")
+GROUPS = common.DEV_GROUPS  # groups with no resumes are left out in main()
 SECTIONS = ("name", "education", "experience", "publications")
 FUNNEL_COLS = ("GT items", "S1 found", "S4 routed", "S5 matched", "fields correct")
 
@@ -107,7 +108,9 @@ def print_decisions(groups: dict) -> None:
 
 
 def main() -> int:
+    global GROUPS
     all_groups = common.load_groups()
+    GROUPS = tuple(g for g in common.DEV_GROUPS if all_groups[g])
     eids = common.ids([s for g in GROUPS for s in all_groups[g]])
     loss_by_rid = {r["resume_id"]: any(r["loss"].values()) for r in cal.collect(GROUPS)}
     groups: dict = {}
@@ -135,7 +138,7 @@ def main() -> int:
                 rid = resume_id_for(s)
                 decisions.append((read_json(meta)["decision"], loss_by_rid.get(rid, False)))
         groups[g] = {"prf": prf, "items": items, "checks": checks, "decisions": decisions}
-    print(f"END-TO-END REPORT: dev {len(all_groups['dev'])} and tuned {len(all_groups['tuned'])} resumes "
+    print("END-TO-END REPORT: " + ", ".join(f"{g} {len(all_groups[g])}" for g in GROUPS) + " resumes "
           "(a small sample; tuned was used to develop the parser)\n")
     print_prf(groups)
     print_funnel(groups)

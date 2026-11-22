@@ -1,8 +1,10 @@
 """Stage-by-stage loss funnel: where is each ground-truth item lost? (docs/design.md, section 6)
 
-    python eval/funnel.py                dev + tuned (per-item files under reports/funnel/)
+    python eval/funnel.py                dev, tuned, dev2 (per-item files under reports/funnel/)
+    python eval/funnel.py --validation   ALSO validation, aggregates only; every run logged, a
+                                         warning from the 4th run on
     python eval/funnel.py --test-frozen  ALSO test_frozen, aggregates only; ONCE ever
-    python eval/funnel.py --lost-items   list the items lost at S1 (dev + tuned only):
+    python eval/funnel.py --lost-items   list the items lost at S1 (development groups only):
                                          resume ID, section, index, cause, recoverable_by
     python eval/funnel.py --lost-items --stage S4
                                          the same for S4 (or S5), with the method instead
@@ -58,7 +60,7 @@ blocks that stage 4 sent to the section by content_guess, read from the sidecar 
 Publication false positives are printed as: header or sub-heading, non-paper, bleed from
 another section, split fragment, citation-like (not in GT), other.
 
-Check validity (dev + tuned only): for every label-free check that fired (each stage's
+Check validity (development groups only): for every label-free check that fired (each stage's
 reason codes, and each stage's WARN/FAIL status) the table counts, per group, the resumes it
 fired on, how many of those had a real loss at the funnel step that stage feeds (stages 0-1:
 S1; stages 2-4: S4; stage 5: S5; for missing_target_section:<name> only that section's S4
@@ -66,7 +68,7 @@ losses), and how many resumes with such a loss it did not fire on. This shows wh
 is worth trusting before its threshold is calibrated.
 
 Privacy: console output shows counts only; --lost-items shows resume IDs, never text. Per-item and false-positive files are keyed by the
-salted eval ID and hold no resume text. test_frozen: aggregates only, nothing per item.
+salted eval ID and hold no resume text. validation and test_frozen: aggregates only, nothing per item.
 """
 
 from __future__ import annotations
@@ -487,7 +489,7 @@ def fp_group(cause: str, section: str = "education", from_content: bool = False)
 
 
 def stage5_methods(results: dict) -> dict:
-    """{(section, method): {group: count}} from the stage 5 records (dev and tuned)."""
+    """{(section, method): {group: count}} from the stage 5 records."""
     out: dict = defaultdict(Counter)
     for g, r in results.items():
         for section, method in r.get("stage5_methods", []):
@@ -548,7 +550,7 @@ def check_validity(per_resume: list[tuple[set, set]]) -> dict[tuple[str, str], d
 
 
 def print_check_validity(results: dict) -> None:
-    groups = [g for g in ("dev", "tuned") if g in results]
+    groups = [g for g in common.DEV_GROUPS if g in results]
     tables = {g: check_validity(results[g]["checks"]) for g in groups}
     keys = sorted({k for t in tables.values() for k in t})
     print(f"  {'stage':<8}{'check':<40}" + "".join(f"{g + ' fired/+loss/missed':>28}" for g in groups))
@@ -664,10 +666,12 @@ def _jsonl(rows: list[dict]) -> str:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="python eval/funnel.py", description=__doc__.splitlines()[0])
     mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--validation", action="store_true",
+                      help="also validation, aggregates only; every run logged, a warning from the 4th")
     mode.add_argument("--test-frozen", action="store_true",
                       help="also test_frozen, aggregates only; allowed once, logged")
     mode.add_argument("--lost-items", action="store_true",
-                      help="list lost items for dev and tuned (resume IDs only)")
+                      help="list lost items for dev, tuned and dev2 (resume IDs only)")
     ap.add_argument("--stage", choices=("S1", "S4", "S5"), default="S1",
                     help="with --lost-items: which funnel step (default S1)")
     return ap
@@ -682,7 +686,7 @@ def print_lost_items(results: dict, ids: dict, step: str = "S1") -> None:
     rid_of = {v["eval_id"]: v["resume_id"] for v in ids.values()}
     last = "recoverable_by" if step == "S1" else "method"
     print(f"{'resume_id':<12}{'section':<14}{'index':>6}  {'cause':<28}{last}")
-    for g in ("dev", "tuned"):
+    for g in [g for g in common.DEV_GROUPS if g in results]:
         rows = sorted((rid_of[i["eval_id"]], i["section"], i["idx"], i["cause"],
                        ",".join(i["recoverable_by"]) if step == "S1" else (i["method"] or ""))
                       for i in results[g]["items"] if i["lost_at"] in LOST_AT_FOR_STEP[step])
@@ -692,7 +696,11 @@ def print_lost_items(results: dict, ids: dict, step: str = "S1") -> None:
 
 def run(a: argparse.Namespace) -> int:
     groups = common.load_groups()
-    order = ["dev", "tuned"]
+    order = [g for g in common.DEV_GROUPS if groups[g]]
+    warning = ""
+    if a.validation:
+        warning = common.log_validation_run(TOOL, Path(__file__), settings())["warning"]
+        order.append("validation")
     if a.test_frozen:
         common.require_frozen_allowed(TOOL, rerun_allowed=False)
         common.log_frozen_run(TOOL, Path(__file__), settings())
@@ -711,13 +719,13 @@ def run(a: argparse.Namespace) -> int:
             per_unit = (st["records"]["stage5"] or {}).get("per_unit") or {}
             methods5 += [(sec, (per_unit.get(sec) or {}).get("method_used") or "none")
                          for sec in ("personal", "education", "experience", "publications")]
-            if g != "test_frozen":  # never looked at per resume for test_frozen
+            if g not in common.GUARDED_GROUPS:  # never looked at per resume for guarded groups
                 fired = load_checks(stem)
                 if fired is not None:
                     checks.append((fired, {(i["lost_at"], i["section"]) for i in it if i["lost_at"] != "ok"}))
         results[g] = {"items": items, "fps": fps, "incomplete": incomplete, "n": len(groups[g]),
                       "checks": checks, "stage5_methods": methods5}
-        if g != "test_frozen":
+        if g not in common.GUARDED_GROUPS:
             out = common.reports_dir() / "funnel"
             common.write_text_inside(out / f"items_{g}.jsonl", _jsonl(items))
             common.write_text_inside(out / f"fps_{g}.jsonl", _jsonl(fps))
@@ -725,9 +733,11 @@ def run(a: argparse.Namespace) -> int:
     if a.lost_items:
         print_lost_items(results, ids, a.stage)
         return 0
+    if warning:
+        print(f"WARNING: {warning}\n")
     print("=== FUNNEL: where GT items are lost (first failing stage) ===")
     for g, r in results.items():
-        note = "  (aggregates only)" if g == "test_frozen" else ""
+        note = "  (aggregates only)" if g in common.GUARDED_GROUPS else ""
         print(f"  {g}: {r['n']} resume(s){note}")
         if r["incomplete"]:
             print(f"    {r['incomplete']} resume(s) have no stage 1 or stage 4 file; "
@@ -739,9 +749,10 @@ def run(a: argparse.Namespace) -> int:
         cnt = {g: sum(1 for i in r["items"] if i["lost_at"] == "S1 text" and i["cause"] == cause)
                for g, r in results.items()}
         print(f"  {cause:<16}" + "".join(f"{cnt[g]:>12}" for g in results))
-    print("\n=== LARGEST LOSS POINTS (ranked by dev + tuned) ===")
+    print("\n=== LARGEST LOSS POINTS (ranked by the development groups) ===")
     print(f"  {'#':>3} {'section':<13}{'stage':<12}{'cause':<52}" + "".join(f"{g:>12}" for g in results))
-    for k, ((sec, st, cause), cnt) in enumerate(loss_points(results)[:15], 1):
+    ranked = loss_points(results, tuple(g for g in common.DEV_GROUPS if g in results))
+    for k, ((sec, st, cause), cnt) in enumerate(ranked[:15], 1):
         print(f"  {k:>3} {sec:<13}{st:<12}{cause[:51]:<52}" + "".join(f"{cnt[g]:>12}" for g in results))
     print("\n=== METHOD THAT HANDLED EACH LOST ITEM ===")
     print(f"  {'section':<13}{'stage':<12}{'method':<52}" + "".join(f"{g:>12}" for g in results))
@@ -760,7 +771,7 @@ def run(a: argparse.Namespace) -> int:
         print(f"  {sec:<14}{method:<40}" + "".join(f"{cnt[g]:>12}" for g in results))
     print("\n=== FALSE-POSITIVE CAUSES (unmatched predictions) ===")
     print_fps(results)
-    print("\n=== CHECK VALIDITY (dev + tuned): does a check fire where a real loss is? ===")
+    print("\n=== CHECK VALIDITY (development groups): does a check fire where a real loss is? ===")
     print_check_validity(results)
     return 0
 

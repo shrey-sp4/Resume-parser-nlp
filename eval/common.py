@@ -1,12 +1,14 @@
-"""Shared helpers for eval/: data folders, groups, private IDs and the test_frozen guard.
+"""Shared helpers for eval/: data folders, groups, private IDs and the validation and test_frozen guards.
 
 Everything is read from and written to RESUME_DATA_DIR only:
     ground_truth_v2/<stem>.json      ground truth (GT v2, docs/design.md section 5.1)
-    ground_truth_v2/_split.json      {"dev": [...], "test_frozen": [...]}; tuned = every other GT file
+    ground_truth_v2/_split.json      {"dev", "dev2", "validation", "test_frozen": [...]}; tuned = every
+                                     other GT file (validation and test_frozen are guarded)
                                      (read by resume_parser.groups, shared with cli run --groups)
     outputs/<stem>.json              predictions (same format as the ground truth)
     reports/stages/<resume_id>/      saved stage files (cli run --save-stages)
     reports/test_frozen_runs.log     one JSON line per test_frozen run
+    reports/validation_runs.log      one JSON line per validation run (a warning from the 4th on)
     private/salt.txt, id_map.json    salt for eval IDs, and the map from IDs to file names
 
 Two kinds of ID:
@@ -28,6 +30,8 @@ from resume_parser import groups as groups_mod
 from resume_parser.schema import CONFIG_DIR, data_root, read_json, require_inside_data_root, resume_id_for
 
 GROUPS = groups_mod.GT_GROUPS
+DEV_GROUPS = groups_mod.DEV_GROUPS
+GUARDED_GROUPS = groups_mod.GUARDED_GROUPS
 FROZEN_LOG = "test_frozen_runs.log"
 
 
@@ -150,6 +154,48 @@ def require_frozen_allowed(tool: str, rerun_reason: str | None = None, rerun_all
             f"refusing --test-frozen: {tool} has already been run on test_frozen "
             f"{len(earlier)} time(s); pass --allow-rerun \"<reason>\" to run it again."
         )
+
+
+# ---------------------------------------------------------------- validation guard
+
+VALIDATION_LOG = "validation_runs.log"
+VALIDATION_WARN_FROM = 4  # from this run of a tool on, its validation results are no longer fair
+
+
+def validation_runs(tool: str) -> list[dict]:
+    """Earlier validation runs of one tool, from reports/validation_runs.log."""
+    path = reports_dir() / VALIDATION_LOG
+    if not path.is_file():
+        return []
+    return [e for e in (json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip())
+            if e.get("tool") == tool]
+
+
+def validation_warning(run: int) -> str:
+    if run < VALIDATION_WARN_FROM:
+        return ""
+    return f"validation has been used {run} times; results are no longer a fair estimate"
+
+
+def log_validation_run(tool: str, script_path: Path, settings: dict) -> dict:
+    """Append one line for this validation run (never refused). From the 4th run of a tool on
+    the line, and every report of that run, carries a warning."""
+    run = len(validation_runs(tool)) + 1
+    entry = {
+        "tool": tool,
+        "run": run,
+        "utc": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+        "script_sha256": sha256_file(script_path),
+        "common_sha256": sha256_file(Path(__file__)),
+        "eval_settings_sha256": sha256_settings(settings),
+        "pipeline_thresholds_sha256": sha256_file(CONFIG_DIR / "thresholds.json"),
+        "warning": validation_warning(run),
+    }
+    path = require_inside_data_root(reports_dir() / VALIDATION_LOG)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(entry, sort_keys=True) + "\n")
+    return entry
 
 
 def log_frozen_run(tool: str, script_path: Path, settings: dict, reason: str | None = None) -> dict:

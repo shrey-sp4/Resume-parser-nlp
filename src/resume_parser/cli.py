@@ -4,8 +4,9 @@
                                               refuses while stub methods are left,
                                               unless --allow-stubs is given;
                                               --save-stages keeps stage output for eval/funnel.py;
-                                              --groups picks GT groups (default dev,tuned;
-                                              test_frozen only when named)
+                                              --groups picks GT groups (default dev,tuned,dev2;
+                                              validation and test_frozen only when named, and
+                                              then shown as counts only)
     python -m resume_parser.cli validate-gt   check RESUME_DATA_DIR/ground_truth_v2/*.json
     python -m resume_parser.cli check-determinism [--groups]
                                               run the selected PDFs twice into
@@ -27,7 +28,7 @@ from pathlib import Path
 from resume_parser import groups as groups_mod
 from resume_parser.schema import DataDirError, data_root, read_json, resume_id_for, schema_errors
 
-DEFAULT_GROUPS = "dev,tuned"
+DEFAULT_GROUPS = "dev,tuned,dev2"
 
 
 def _pdfs_in(folder: Path) -> list[Path]:
@@ -39,7 +40,8 @@ def _pdfs_in(folder: Path) -> list[Path]:
 def _select_by_group(pdfs: list[Path], groups_arg: str | None) -> tuple[list[tuple[Path, str]], list[str]]:
     """(pdf, group) pairs to process, and the groups asked for.
 
-    With a _split.json, only the named groups run (default dev,tuned); test_frozen runs only
+    With a _split.json, only the named groups run (default dev,tuned,dev2); a guarded group
+    (validation, test_frozen) runs only
     when named. Without one (no ground truth set up), every PDF runs and --groups is refused.
     """
     if not groups_mod.has_split():
@@ -101,13 +103,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         print("groups: " + ", ".join(f"{g} {n}" for g, n in counts.items()))
     pdfs = [p for p, _ in selected]
     group_of = {p: g for p, g in selected}
-    frozen_done = 0
+    guarded_done: dict[str, int] = {}
     review: list[tuple[str, str]] = []
 
     errors = 0
     for pdf in pdfs:
         rid = resume_id_for(pdf.name)
-        quiet = group_of[pdf] == "test_frozen"  # never show test_frozen per resume
+        quiet = group_of[pdf] in groups_mod.GUARDED_GROUPS  # never shown per resume
         try:
             record = run_pipeline(pdf)
             write_resume(record, out_dir)
@@ -115,22 +117,23 @@ def cmd_run(args: argparse.Namespace) -> int:
                 write_stage_files(record, root / "reports" / "stages")
         except Exception as exc:  # report and carry on with the next resume
             errors += 1
-            print("test_frozen: one resume failed" if quiet else f"{rid} ERROR {type(exc).__name__}")
+            print(f"{group_of[pdf]}: one resume failed" if quiet else f"{rid} ERROR {type(exc).__name__}")
             continue
         if quiet:
-            frozen_done += 1
+            guarded_done[group_of[pdf]] = guarded_done.get(group_of[pdf], 0) + 1
             continue
         unknown = unknown_headings(record)
         review += [(rid, text) for text in unknown]
         stopped = f" stopped_at=stage{record.stopped_at}" if record.stopped_at is not None else ""
         print(f"{rid} {record.sidecar['decision']} flags={len(record.flags)} unknown_headings={len(unknown)}{stopped}")
-    if frozen_done:
-        print(f"test_frozen: {frozen_done} processed (not shown per resume)")
+    for group, done in sorted(guarded_done.items()):
+        print(f"{group}: {done} processed (not shown per resume)")
 
-    if args.save_stages:
+    shown = len(pdfs) - sum(guarded_done.values()) - errors
+    if args.save_stages and shown > 0:  # a guarded-only run leaves the development list as it is
         write_unknown_headings(review, root / "reports")
         print(f"unknown heading-like lines: {len(review)} (for review in RESUME_DATA_DIR/reports/"
-              "stage3_unknown_headings.txt; test_frozen is never listed)")
+              "stage3_unknown_headings.txt; validation and test_frozen are never listed)")
     index = write_index(out_dir)
     write_review_queue(index, root / "review_queue")
     summary = write_run_summary(out_dir, root / "reports")
@@ -143,7 +146,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def cmd_check_determinism(args: argparse.Namespace) -> int:
     """Run the selected PDFs twice into two folders inside the data folder and compare every
-    output file byte for byte. Prints counts and resume IDs only. test_frozen is refused."""
+    output file byte for byte. Prints counts and resume IDs only. Guarded groups (validation,
+    test_frozen) are refused."""
     import shutil
 
     from resume_parser.pipeline import run_pipeline
@@ -156,8 +160,8 @@ def cmd_check_determinism(args: argparse.Namespace) -> int:
     except groups_mod.GroupError as exc:
         print(f"check-determinism: {exc}", file=sys.stderr)
         return 2
-    if "test_frozen" in wanted:
-        print("check-determinism: test_frozen is not allowed here.", file=sys.stderr)
+    if set(wanted) & set(groups_mod.GUARDED_GROUPS):
+        print("check-determinism: validation and test_frozen are not allowed here.", file=sys.stderr)
         return 2
     base = require_inside_data_root(root / "reports" / "determinism")
     for run in ("a", "b"):
@@ -231,8 +235,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument(
         "--groups",
-        help="comma list of dev, tuned, test_frozen, unlabelled (default dev,tuned; "
-        "test_frozen runs only when named)",
+        help="comma list of dev, tuned, dev2, validation, test_frozen, unlabelled (default "
+        "dev,tuned,dev2; validation and test_frozen run only when named, counts only)",
     )
     run.set_defaults(func=cmd_run)
 
@@ -243,7 +247,7 @@ def build_parser() -> argparse.ArgumentParser:
     gt.set_defaults(func=cmd_validate_gt)
 
     det = sub.add_parser("check-determinism", help="run twice and compare every output byte for byte")
-    det.add_argument("--groups", help="comma list of dev, tuned, unlabelled (default dev,tuned)")
+    det.add_argument("--groups", help="comma list of dev, tuned, dev2, unlabelled (default dev,tuned,dev2)")
     det.set_defaults(func=cmd_check_determinism)
     return parser
 

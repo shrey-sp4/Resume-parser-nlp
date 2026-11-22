@@ -1,7 +1,8 @@
-"""Ground-truth groups: dev, tuned and test_frozen (docs/design.md, section 6).
+"""Ground-truth groups (docs/design.md, section 6).
 
-RESUME_DATA_DIR/ground_truth_v2/_split.json lists dev and test_frozen; tuned is every other
-GT file. An entry may be a file stem, a file name (.json or .pdf), or a resume ID ("r_...",
+RESUME_DATA_DIR/ground_truth_v2/_split.json lists dev, dev2, validation and (optionally)
+test_frozen; tuned is every other GT file. dev, tuned and dev2 are development groups (per-resume
+results allowed). validation and test_frozen are guarded: aggregates only, every run logged. An entry may be a file stem, a file name (.json or .pdf), or a resume ID ("r_...",
 looked up in private/id_map.json, or matched against the GT stems).
 
 PDFs with no ground truth form a fourth group, "unlabelled".
@@ -13,7 +14,10 @@ from pathlib import Path
 
 from resume_parser.schema import data_root, read_json, resume_id_for
 
-GT_GROUPS = ("dev", "tuned", "test_frozen")
+GT_GROUPS = ("dev", "tuned", "dev2", "validation", "test_frozen")
+DEV_GROUPS = ("dev", "tuned", "dev2")
+GUARDED_GROUPS = ("validation", "test_frozen")
+LISTED_GROUPS = ("dev", "dev2", "validation", "test_frozen")  # the groups _split.json names
 ALL_GROUPS = GT_GROUPS + ("unlabelled",)
 SPLIT_FILE = "_split.json"
 
@@ -62,17 +66,19 @@ def load_groups() -> dict[str, list[str]]:
                 by_id.setdefault(entry["eval_id"], entry["file"])
 
     groups: dict[str, list[str]] = {}
-    for name in ("dev", "test_frozen"):
+    for name in LISTED_GROUPS:
         stems = sorted({_to_stem(s, by_id) for s in split.get(name, [])})
         missing = [s for s in stems if s not in known]
         if missing:
             ids = ", ".join(resume_id_for(s) for s in missing)
             raise GroupError(f"{SPLIT_FILE}: {name} lists {len(missing)} file(s) with no ground truth ({ids}).")
         groups[name] = stems
-    both = set(groups["dev"]) & set(groups["test_frozen"])
-    if both:
-        raise GroupError(f"{SPLIT_FILE}: {len(both)} file(s) are in both dev and test_frozen.")
-    taken = set(groups["dev"]) | set(groups["test_frozen"])
+    for i, a in enumerate(LISTED_GROUPS):
+        for b in LISTED_GROUPS[i + 1:]:
+            both = set(groups[a]) & set(groups[b])
+            if both:
+                raise GroupError(f"{SPLIT_FILE}: {len(both)} file(s) are in both {a} and {b}.")
+    taken = set().union(*(groups[g] for g in LISTED_GROUPS))
     groups["tuned"] = [s for s in all_stems if s not in taken]
     return {g: groups[g] for g in GT_GROUPS}
 

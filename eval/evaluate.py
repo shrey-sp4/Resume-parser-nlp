@@ -1,10 +1,13 @@
 """Score predictions against ground truth, per resume and per field (docs/design.md, section 6).
 
-    python eval/evaluate.py                       dev + tuned: per-resume rows and aggregates
+    python eval/evaluate.py                       dev, tuned, dev2: per-resume rows and aggregates
     python eval/evaluate.py --calibrate           best-pair similarity histograms (dev + tuned)
     python eval/evaluate.py --json reports/x.json also write results (relative to RESUME_DATA_DIR;
                                                   any folder outside it is refused)
     python eval/evaluate.py --fingerprint         print the evaluator hashes and exit
+    python eval/evaluate.py --validation          ALSO validation, aggregates only; every run is
+                                                  logged (reports/validation_runs.log), and from
+                                                  the 4th run on a warning is printed
     python eval/evaluate.py --test-frozen         ALSO test_frozen, aggregates only, once;
                                                   a second run needs --allow-rerun "<reason>"
 
@@ -38,7 +41,7 @@ although the GT has none) is reported separately and never scored.
   CIs              95% percentile bootstrap over resumes (micro-aggregated), fixed seed
 
 Console rows show resume IDs only. Files written here use the salted eval IDs.
-test_frozen is never shown per resume.
+validation and test_frozen are never shown or stored per resume.
 """
 
 from __future__ import annotations
@@ -444,7 +447,7 @@ def print_group(name: str, res: dict, per_resume=None) -> None:
     print(f"\n=== {name}  (n={res['n']} resumes) ===")
     if name == "tuned":
         print("    (tuned-set numbers: the parser was developed on these resumes)")
-    if name == "test_frozen":
+    if name in common.GUARDED_GROUPS:
         print("    (aggregates only; per-resume results are not shown)")
     if res["missing_predictions"]:
         print(f"    {res['missing_predictions']} resume(s) have no prediction (scored as empty)")
@@ -529,6 +532,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--calibrate", action="store_true", help="similarity histograms (dev + tuned)")
     ap.add_argument("--json", type=Path, help="also write results here (relative to RESUME_DATA_DIR; outside it is refused)")
     ap.add_argument("--fingerprint", action="store_true", help="print the evaluator hashes and exit")
+    ap.add_argument("--validation", action="store_true", help="also score validation (aggregates only, logged)")
     ap.add_argument("--test-frozen", action="store_true", help="also score test_frozen (aggregates only, logged)")
     ap.add_argument("--allow-rerun", metavar="REASON", help="written reason for a second test_frozen run")
     return ap
@@ -549,7 +553,11 @@ def run(a: argparse.Namespace) -> int:
         calibrate(groups)
         return 0
 
-    order = ["dev", "tuned"]
+    order = [g for g in common.DEV_GROUPS if groups[g]]
+    warning = ""
+    if a.validation:
+        warning = common.log_validation_run(TOOL, Path(__file__), settings())["warning"]
+        order.append("validation")
     if a.test_frozen:
         common.require_frozen_allowed(TOOL, a.allow_rerun, rerun_allowed=True)
         common.log_frozen_run(TOOL, Path(__file__), settings(), a.allow_rerun)
@@ -560,10 +568,14 @@ def run(a: argparse.Namespace) -> int:
     for g in order:
         per = [(s, score_resume(load_gt(s), load_pred(s))) for s in groups[g]]
         res = aggregate([r for _, r in per])
-        shown = None if g == "test_frozen" else [(ids[s]["resume_id"], r) for s, r in per]
-        print_group(g, res, shown)
-        if g != "test_frozen":
+        guarded = g in common.GUARDED_GROUPS
+        if g == "validation" and warning:
+            print(f"\nWARNING: {warning}")
+        print_group(g, res, None if guarded else [(ids[s]["resume_id"], r) for s, r in per])
+        if not guarded:
             res["per_resume"] = {ids[s]["eval_id"]: r for s, r in per}
+        elif g == "validation" and warning:
+            res["warning"] = warning
         results[g] = res
     if json_path:
         common.write_text_inside(json_path, json.dumps(results, indent=1, sort_keys=True, default=float) + "\n")

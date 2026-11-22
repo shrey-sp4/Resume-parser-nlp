@@ -213,6 +213,10 @@ def test_unknown_headings_go_to_a_private_review_file(data_dir, capsys):
 
 def test_review_file_never_lists_test_frozen(data_dir, capsys):
     _labelled(data_dir)
+    review_file = data_dir / "reports" / "stage3_unknown_headings.txt"
+    # a run of guarded groups only leaves the development list alone (no file is written here)
     assert main(["run", "--allow-stubs", "--save-stages", "--groups", "test_frozen"]) == 0
-    review = (data_dir / "reports" / "stage3_unknown_headings.txt").read_text(encoding="utf-8")
-    assert resume_id_for("synthetic_c_variants") not in review
+    assert not review_file.exists()
+    # with development groups in the same run, the guarded resume is still never listed
+    assert main(["run", "--save-stages", "--groups", "dev,test_frozen"]) == 0
+    assert resume_id_for("synthetic_c_variants") not in review_file.read_text(encoding="utf-8")

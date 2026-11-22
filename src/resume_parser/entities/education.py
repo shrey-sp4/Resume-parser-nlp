@@ -4,8 +4,10 @@ Input: the lines of every education section of the Canonical Document, in order;
 boundary always ends an entry. Lines are marked first:
   subheading    a short bold or capitalised line with no degree, year or institution
   continuation  starts with a continuation word (thesis, advisor, CGPA, specialisation, ...), or
-                mentions a thesis, dissertation, supervisor or advisor with no year and no
-                institution: it goes to the previous entry's raw text, never starts an entry
+                mentions a thesis, dissertation, supervisor or advisor, or teaching, courses,
+                subjects, supervision or students, with no year and no institution (also when it
+                holds a degree word: "Courses taught: M.Sc. Physics"): it goes to the previous
+                entry's raw text, never starts an entry
   school        a school-level line (10th, 12th, SSC, HSC, ...) with no higher degree
 
 Split methods, in order (the first whose check reaches the accept threshold wins):
@@ -61,6 +63,9 @@ from resume_parser.schema import Method, MethodOutput, load_config
 _YEAR_START = re.compile(rf"^\s*(?:\(?\s*){DATE_RANGE.pattern}", re.IGNORECASE)
 _YEAR_ONLY_START = re.compile(r"^\s*\(?(?:19|20)\d{2}\b")
 _THESIS = re.compile(r"\b(?:thesis|dissertation|supervisor|advisor|adviser|under the guidance)\b", re.IGNORECASE)
+# teaching, course or supervision lists ("Courses taught: M.Sc. Physics", "Ph.D. students supervised")
+_TEACHING = re.compile(r"\b(?:taught|teach(?:ing|es)?|courses?|subjects?|supervis\w*|guided|guiding|students?|"
+                       r"scholars?|mentor\w*)\b", re.IGNORECASE)
 
 
 def _cfg():
@@ -76,7 +81,9 @@ def is_continuation(text: str) -> bool:
     words = {w.lower() for w in _cfg()["continuation_words"]}
     if first and (first[0].rstrip(".:") in words or " ".join(first[:2]) in words):
         return True
-    return bool(_THESIS.search(text)) and not find_years(text) and not has_institution(text)
+    if find_years(text) or has_institution(text):
+        return False  # a line with an institution or a year is never only a mention
+    return bool(_THESIS.search(text)) or bool(_TEACHING.search(text))
 
 
 def is_header_text(texts: list[str]) -> bool:

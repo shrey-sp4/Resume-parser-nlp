@@ -13,7 +13,10 @@ Name methods, in order:
                   case or capitals, or in any case when the line is bold or has the largest font
                   on page 1 among the lines that pass the other rules. A name split over two
                   short one-word lines is joined.
-  from_email      the local part of the first email, split on dots, underscores, hyphens and
+  leading_words   only when no line passed: the leading 2 to 4 capitalised words of the first
+                  page-1 line or table cell (a line that is only a CV title is skipped), when they
+                  pass every rule above and form a valid name; always WARN name_from_leading_words
+  from_email     the local part of the first email, split on dots, underscores, hyphens and
                   digits, when it gives 2 or more alphabetic tokens; always WARN name_from_email
   from_file_name  the file stem; lowest confidence, always WARN name_from_file_name
 
@@ -189,8 +192,34 @@ def name_from_file_name(payload) -> MethodOutput:
     return MethodOutput(dict(payload["common"], candidate_name=name, name_source={"page": None, "lines": []}))
 
 
+_LEAD_WORD = re.compile(r"^(?:[A-Z][^\W\d_]*(?:[.'\-][^\W\d_]+)*\.?|[A-Z]\.)$")
+
+
+def name_from_leading_words(payload) -> MethodOutput:
+    """The name at the start of a longer line or table cell: the leading 2 to 4 capitalised
+    words of the first page-1 line or cell (a line that is only a CV title is skipped), when they
+    pass every rule of top_lines and form a valid name. Only reached when no line passed."""
+    for line in payload["page1_lines"][: payload["params"]["name_top_lines"]]:
+        words = line["text"].split()
+        lead = []
+        for w in words:
+            if not _LEAD_WORD.match(w.strip(",;:")) or len(lead) == 4:
+                break
+            lead.append(w.strip(",;:"))
+        if not lead or not CV_WORDS.sub("", " ".join(lead)).strip(" ,;:-"):
+            continue  # a CV title line: look at the next line
+        for n in range(min(4, len(lead)), 1, -1):
+            text = candidate_text(" ".join(lead[:n]))
+            if text and valid_name(text) and len(text.split()) == n:
+                return MethodOutput(dict(payload["common"], candidate_name=text,
+                                         name_source={"page": line["page"], "lines": [line["id"]]}))
+        break  # only the first line or cell is tried
+    return MethodOutput(None)
+
+
 NAME_METHODS = (
     Method("top_lines", name_from_top_lines),
+    Method("leading_words", name_from_leading_words, warn_code="name_from_leading_words"),
     Method("from_email", name_from_email, warn_code="name_from_email"),
     Method("from_file_name", name_from_file_name, warn_code="name_from_file_name"),
 )

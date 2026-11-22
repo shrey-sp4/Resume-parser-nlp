@@ -46,7 +46,7 @@ def test_method_chains_are_registered_in_order():
     assert [m.name for m in SPLIT_METHODS] == [
         "marker_split", "hanging_indent_split", "paragraph_split", "whole_section_one_entry"
     ]
-    assert [m.name for m in NAME_METHODS] == ["top_lines", "from_email", "from_file_name"]
+    assert [m.name for m in NAME_METHODS] == ["top_lines", "leading_words", "from_email", "from_file_name"]
 
 
 def test_stage5_chooses_per_section(synthetic_pdfs):

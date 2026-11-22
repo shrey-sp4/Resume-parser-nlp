@@ -240,7 +240,8 @@ def test_lines_that_are_never_names():
 
 # ---------------------------------------------------------------- sections routed by content only
 
-MENTIONS = [("body", "Taught M.Sc. and B.Sc. classes in physics"), ("body", "Guided three Ph.D. students"),
+# degree words in lines that are not degrees (no teaching words: those lines are continuations anyway)
+MENTIONS = [("body", "Member of the M.Sc. and B.Sc. review board"), ("body", "Reviewer for the Ph.D. evaluation panel"),
             ("body", "Ph.D. in Physics, Westbrook University, 2019")]
 
 
@@ -293,3 +294,29 @@ def test_stream_from_the_cell_after_the_degree_in_a_table_without_header():
     out = edu.table_row_split(payload).data
     assert [e["stream"] for e in out["entries"]] == ["Power and Energy Systems", "Electrical Engineering", ""]
     assert out["entries"][1]["institution"] == "Westbrook Institute of Technology"
+
+
+def test_teaching_and_supervision_lines_never_start_an_entry():
+    texts = ["Ph.D. in Physics, Westbrook University, 2019", "Courses taught: M.Sc. Physics, B.Sc. Mathematics",
+             "Ph.D. students supervised: 3", "M.Sc. in Physics, Lakeside University, 2014"]
+    lines = [{"id": f"p001_l{i:04d}", "page": 1, "text": t, "bbox": [56, 100 + 14 * i, 400, 110 + 14 * i],
+              "font_size": 10, "bold": 0.0, "in_table": False, "row_id": f"r{i}", "segment_index": 0}
+             for i, t in enumerate(texts)]
+    kinds = edu.mark(lines)
+    assert kinds == ["degree", "continuation", "continuation", "degree"]
+    out = edu.anchor_split({"lines": lines, "kinds": kinds, "params": load_thresholds()["stage5_entities"]}).data
+    assert [e["degree"] for e in out["entries"]] == ["Ph.D.", "M.Sc."]
+    # a teaching word with a year or an institution is never only a mention
+    assert edu.mark([dict(lines[0], text="M.Tech. coursework, Southgate College, 2012")]) == ["degree"]
+
+
+def test_name_at_the_start_of_a_longer_line_is_a_fallback(tmp_path):
+    lines = [("contact", "Mira Testwood 12 Lake Road Fakeville Tel 0000 000 001"), ("heading", "EDUCATION"),
+             ("body", "Ph.D. in Physics, Westbrook University, 2019")]
+    name, method = _name(tmp_path, lines, "x1.pdf")
+    assert (name, method) == ("Mira Testwood", "leading_words")
+    # never when a normal line passed, and never when the leading words fail a rule
+    assert _name(tmp_path, PERSONAL_TOP + EDU_BLOCK, "x2.pdf")[1] == "top_lines"
+    lines = [("contact", "Westbrook University Physics Department 2019"), ("heading", "EDUCATION"),
+             ("body", "Ph.D. in Physics, Westbrook University, 2019")]
+    assert _name(tmp_path, lines, "mira_testwood_cv.pdf")[1] == "from_file_name"

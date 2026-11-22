@@ -54,6 +54,42 @@ def test_fuzzy_uses_ratio_on_the_whole_heading():
     assert fuzzy_alias("EDUCATON", fuzzy_min)[0] == "education"  # a typo still maps
 
 
+_BLOCKED = ("teach", "course", "subject", "project", "responsib", "service", "administr", "talk", "present",
+            "poster", "award", "honour", "honor", "reference", "referees", "patent", "workshop", "training",
+            "interest", "skill", "summary", "objective", "profile", "membership")
+
+
+def _exact_only() -> dict[str, list[str]]:
+    from resume_parser.schema import load_config
+
+    return load_config("section_aliases.json")["exact_only"]
+
+
+def test_exact_only_aliases_map_exactly_and_never_fuzzily():
+    from resume_parser.headings import fuzzy_index
+
+    fuzzy_min = load_thresholds()["stage4_normalize"]["fuzzy_min"]
+    for section, aliases in _exact_only().items():
+        for alias in aliases:
+            assert exact_alias(alias.upper() + ":") == (section, section), alias
+            assert norm_heading(alias) not in fuzzy_index(), alias  # new, not a copy of an old alias
+            found = fuzzy_alias(alias, fuzzy_min)
+            assert found is None or found[2] < 100, alias  # fuzzy match never sees it
+
+
+def test_exact_only_aliases_are_distinct_and_keep_the_rules():
+    seen = set()
+    for section, aliases in _exact_only().items():
+        assert section in ("personal", "education", "experience", "publications")
+        for alias in aliases:
+            key = norm_heading(alias)
+            assert key not in seen, alias
+            seen.add(key)
+            assert not any(word in key for word in _BLOCKED), alias  # jobs only; no other-section words
+    assert exact_alias("Positions") is None and exact_alias("Preprints") is None  # left out on purpose
+    assert exact_alias("Courses Taught") == ("other", "teaching")  # an old alias keeps its section
+
+
 def test_line_kinds():
     assert line_kind(PUB_LINES[0][1]) == "citation"
     assert line_kind(EDU_LINES[0][1]) == "degree"

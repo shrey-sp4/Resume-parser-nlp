@@ -3,7 +3,8 @@
 Headings are compared in a normalised form: unicode NFKC, lower case, leading numbering
 ("2.", "iv)", "A.") removed, a trailing colon or dash and a trailing count such as "(5)"
 removed, spaces collapsed. The alias map is config/section_aliases.json: four canonical
-lists, plus "other" split into labels (skills, awards, ...) that become original_name.
+lists, plus "other" split into labels (skills, awards, ...) that become original_name, plus
+"exact_only": common academic headings for the four targets that match exactly, never fuzzily.
 
 Content patterns mark lines that look like they belong to a target section: citations
 (publications), degree words (education) and date ranges (experience).
@@ -34,8 +35,9 @@ def norm_heading(text: str) -> str:
 
 
 @lru_cache(maxsize=1)
-def alias_index() -> dict[str, tuple[str, str]]:
-    """normalised alias -> (canonical name, original label)."""
+def fuzzy_index() -> dict[str, tuple[str, str]]:
+    """normalised alias -> (canonical name, original label), for the aliases that fuzzy match
+    may use: the four target lists and "other", not "exact_only"."""
     cfg = load_config("section_aliases.json")
     index: dict[str, tuple[str, str]] = {}
     for name in TARGETS:
@@ -48,21 +50,34 @@ def alias_index() -> dict[str, tuple[str, str]]:
     return index
 
 
+@lru_cache(maxsize=1)
+def alias_index() -> dict[str, tuple[str, str]]:
+    """Every alias: the fuzzy ones plus "exact_only" (common headings that only match exactly).
+    An alias already listed keeps its section."""
+    index = dict(fuzzy_index())
+    for name in TARGETS:
+        for alias in (load_config("section_aliases.json").get("exact_only") or {}).get(name, []):
+            index.setdefault(norm_heading(alias), (name, name))
+    index.pop("", None)
+    return index
+
+
 def exact_alias(text: str) -> tuple[str, str] | None:
     return alias_index().get(norm_heading(text))
 
 
 def fuzzy_alias(text: str, minimum: float) -> tuple[str, str, float] | None:
     """Best alias by fuzz.ratio on the whole normalised heading, if at least minimum (0-100).
-    Ties go to the alias that sorts first, so the result does not depend on dict order."""
+    Ties go to the alias that sorts first, so the result does not depend on dict order.
+    Exact-only aliases are never used here."""
     key = norm_heading(text)
     if not key:
         return None
     best = None
-    for alias in sorted(alias_index()):
+    for alias in sorted(fuzzy_index()):
         score = fuzz.ratio(key, alias)
         if score >= minimum and (best is None or score > best[2]):
-            best = (*alias_index()[alias], round(score, 2))
+            best = (*fuzzy_index()[alias], round(score, 2))
     return best
 
 

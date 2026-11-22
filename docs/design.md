@@ -203,7 +203,10 @@ always picks the same method.
   `config/section_aliases.json` (many aliases -> one canonical name; `other` is split into
   labels such as `skills`, `awards`, `presentations` that become `original_name`). The map
   merges the old repo's heading map with a starter list; job titles and school-level labels
-  (12th, HSC) are entry content, never headings.
+  (12th, HSC) are entry content, never headings. A separate `exact_only` list holds common
+  academic CV headings for the four target sections (from general knowledge, not from resumes);
+  they match only exactly after normalising, never by fuzzy match, and never override an alias
+  that is already listed.
   Sections that are not one of the four are kept under `other` with their original label
   (for example `skills`, `awards`) so nothing is lost.
 - **Mapping rule for experience** (decide it once, in the config, with comments): only headings

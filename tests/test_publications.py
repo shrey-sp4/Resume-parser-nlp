@@ -284,3 +284,51 @@ def test_venue_without_a_venue_word():
                 pb.marker_split)
     assert [e["venue"] for e in data["entries"]] == ["Nature Toys", "", "Placeholder Toy Notes"]
     assert pb.find_venue(", 12, pp. 1-9, 2019.") == ("", False)
+
+
+# ---------------------------------------------------------------- S5 loss fixes
+
+
+def test_title_case_title_after_an_initials_author_list():
+    t, _s, _e, authors = pb.find_title("Testwood, M. K.; Doe, R. Modelling Gene Networks With Sparse Graphs. "
+                                       "Journal of Invented Biology, 4, 2022.")
+    assert t == "Modelling Gene Networks With Sparse Graphs" and authors.startswith("Testwood, M. K.; Doe")
+    # another name after an initial is never taken as the title
+    for text in ("A. Ravi Testwood and B. Doe, Toy rules for small games, Toy Notes, 2020.",
+                 "A. Ravi Kumar Testwood, B. Doe, Toy rules for small games, Toy Notes, 2020.",
+                 "M. Testwood C. Doe, Toy rules for small games, Toy Notes, 2020."):
+        assert pb.find_title(text)[0] == "Toy rules for small games", text
+
+
+def test_initials_extracted_with_a_space_before_the_dot():
+    line = {"id": "l0", "text": "1. Testwood, M . K .; Doe, R . Modelling gene networks with sparse graphs. "
+                                "Journal of Invented Biology, 4, 2022.", "page": 1}
+    entry = pb.parse_entry([line], PARAMS)["entry"]
+    assert entry["title"] == "Modelling gene networks with sparse graphs"
+    assert entry["venue"] == "Journal of Invented Biology" and entry["year"] == "2022"
+
+
+def test_citation_ending_without_a_year_or_pages_still_ends_at_the_next_author_list():
+    texts = ["1. M. Testwood, R. Doe. Modelling gene networks with sparse graphs. Journal of Invented Biology, 2022,",
+             "article e1234",
+             "J. Fakely, A. Roe. Thin films that do not exist. Invented Physics Letters, 2021, article e77",
+             "2. R. Doe, M. Testwood. Toy chemistry revisited. Placeholder Toy Notes, 2020."]
+    data = _run(texts, pb.marker_split)
+    assert _titles(data) == ["Modelling gene networks with sparse graphs", "Thin films that do not exist",
+                             "Toy chemistry revisited"]
+    # an author list that wraps (no title or year read yet) never starts an entry
+    wrapped = _run(["1. M. Testwood, R. Doe, J. Fakely,", "A. Roe. Modelling gene networks with sparse graphs. "
+                    "Journal of Invented Biology, 2022.", "2. M. Testwood. Toy chemistry revisited. Toy Notes, 2020."],
+                   pb.marker_split)
+    assert _titles(wrapped) == ["Modelling gene networks with sparse graphs", "Toy chemistry revisited"]
+
+
+def test_bare_list_numbers_start_entries_only_in_a_sequence_of_three():
+    texts = ["1 M. Testwood, R. Doe, Modelling gene networks with sparse graphs, Journal of Invented Biology, 2022",
+             "2 J. Fakely, A. Roe, Thin films that do not exist, Invented Physics Letters, 2021",
+             "3 R. Doe, Toy chemistry revisited, Placeholder Toy Notes, 2020"]
+    assert len(_run(texts, pb.marker_split)["entries"]) == 3
+    down = list(reversed(["3" + t[1:] if t[0] == "1" else "1" + t[1:] if t[0] == "3" else t for t in texts]))
+    assert len(_run(down, pb.marker_split)["entries"]) == 3
+    lines = [_line(i, t) for i, t in enumerate(texts[:2] + ["12 Placeholder Toy Notes, 2020"])]
+    assert pb._bare_number_starts(lines, ["entry"] * 3) == set()  # 1, 2, 12: no run of three

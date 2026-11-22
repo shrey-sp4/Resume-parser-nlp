@@ -14,11 +14,17 @@ other); a section boundary always ends an entry. Lines are marked first:
 
 Split methods, in order (the first whose check reaches the accept threshold wins):
   marker_split            an entry starts at a line beginning with a number or a bullet ("1.",
-                          "[1]", "(1)", "J1.", "•", "-"), right after a year-only line, or (as
+                          "[1]", "(1)", "J1.", "•", "-"; a bare number, "12 Doe, ...", only in a
+                          run of 3 or more such lines numbered in sequence), right after a
+                          year-only line, or (as
                           stage 2 removes bullet characters) at a line that follows a line ending
-                          in a full stop and starts like an author list. Other lines are wrapped
-                          parts of the entry before, also across pages. Gives no output when no
-                          line starts an entry this way, or fewer than 2 entries would result.
+                          in a full stop and starts like an author list. Also at a line starting
+                          with an author list that holds an initial, when the lines since the last
+                          start already read as a whole citation (a title and a year), as a
+                          citation may end without a year, pages or a full stop. Other lines are
+                          wrapped parts of the entry before, also across pages. Gives no output
+                          when no line starts an entry the first ways, or fewer than 2 entries
+                          would result.
   hanging_indent_split    an entry starts at a line that begins at the left margin of its section
                           and page; lines indented past indent_tolerance_pt are wrapped parts.
                           Gives no output when no line is indented.
@@ -27,9 +33,11 @@ Split methods, in order (the first whose check reaches the accept threshold wins
   whole_section_one_entry the whole section as one entry; always WARN
 Sub-heading, total and year-only lines always end the entry before them.
 
-Fields, as printed (a field that is not clear stays empty):
+Fields, as printed (a field that is not clear stays empty). An initial extracted with a space
+before its dot ("A . B .") is read as "A. B." first.
   title  quoted text when there is any; otherwise the text after the author list (names and
-         initials separated by commas, "and" or "&", ending at a full stop or colon, or the
+         initials separated by commas, "and" or "&", ending at a full stop or colon, or at the
+         last initial before a sentence-case or Title-Case title of 3 or more words; or the
          authors followed by "(year)."), up to the end of that sentence; for comma-only citations
          the first comma segment after the author segments that has 3 or more words
   venue  the first comma segment after the title that holds a journal, conference or publisher
@@ -76,8 +84,13 @@ _DOI = re.compile(r"\b(?:doi\s*:?\s*)?(10\.\d{4,9}/[^\s,;]+)", re.IGNORECASE)
 _QUOTED = re.compile(r"[\"“”]\s*([^\"“”]{8,400}?)\s*[\"“”]|‘\s*([^‘’]{8,400}?)\s*’")
 _APA_YEAR = re.compile(r"\(\s*(?:19|20)\d{2}[a-z]?\s*\)\s*[.:,]?\s*")
 # a full stop after a word of 2+ letters (not an initial), a colon, or "et al."; or a full stop
-# after a closing initial when a sentence-case title follows ("Doe J, Roe A. Fast alignment of")
-_CUT = re.compile(r"(?:(?<=[A-Za-zÀ-ɏ'’\-)]{2})\.|:|\bet\s+al\.)\s+|(?<=\b[A-Z])\.\s+(?=[A-Z][a-z]+\s+[a-z])")
+# after a closing initial when a sentence-case title follows ("Doe J, Roe A. Fast alignment of"),
+# or a Title-Case one: three words with no comma, initial, "and" or "&" among them ("Doe, J. K.;
+# Roe, A. Fast Alignment Of Reads"), so another name ("A. Ravi Kumar, ...") never counts
+_SPACED_INITIAL = re.compile(r"(?<![A-Za-z])([A-Z])\s+\.(?=[\s,;]|$)")  # an initial with a space before its dot
+_TITLE_WORD = r"(?!(?:and|&)\s)(?![A-Z]\.?(?=[\s,]|$))[^\s,;]+"
+_CUT = re.compile(r"(?:(?<=[A-Za-zÀ-ɏ'’\-)]{2})\.|:|\bet\s+al\.)\s+|(?<=\b[A-Z])\.\s+(?=[A-Z][a-z]+\s+[a-z])"
+                  rf"|(?<=\b[A-Z])\.\s+(?=[A-Z][a-zà-ɏ'’\-]+\s+{_TITLE_WORD}\s+{_TITLE_WORD}(?:\s|$))")
 _SENTENCE_END = re.compile(r"(?<=[a-zà-ɏ0-9)\]]{2})\.(?=\s+\S)|[?!](?=\s+\S)")
 _INITIALS = re.compile(r"^[A-Z]\.?(?:\s?-?[A-Z]\.?){0,3}$")
 _AUTHOR_START = re.compile(r"^(?:(?:[A-Z]\.\s?-?){1,3}\s*[A-Z][a-zà-ɏ'’\-]+|[A-Z][a-zà-ɏ'’\-]+,?\s+(?:[A-Z]\.\s?){1,3}"
@@ -408,6 +421,7 @@ def parse_entry(lines: list[dict], params: dict) -> dict:
     raw = _join([l["text"] for l in lines])
     text = _MARKER.sub("", raw, count=1).strip()
     text = re.sub(r"^\d{1,3}\s+(?=[A-Z])", "", text)  # a bare list number ("12 Surname, ...")
+    text = _SPACED_INITIAL.sub(r"\1.", text)  # "Doe, A . B ." as extracted -> "Doe, A. B."
     urls = _URL.findall(text)
     doi = _DOI.search(text)
     clean = _DOI.sub(" ", _URL.sub(" ", text))
@@ -496,8 +510,10 @@ def marker_split(payload) -> MethodOutput:
     lines, kinds = payload["lines"], payload["kinds"]
     if not lines:
         return _empty("marker_split")
+    bare = _bare_number_starts(lines, kinds)
+
     def starts_here(i, line):
-        if _MARKER.match(line["text"]) or (i > 0 and kinds[i - 1] == "yearhead"):
+        if _MARKER.match(line["text"]) or i in bare or (i > 0 and kinds[i - 1] == "yearhead"):
             return True
         # stage 2 removes bullet characters: an unnumbered list shows as a line after a full stop
         # that starts like an author list
@@ -514,7 +530,73 @@ def marker_split(payload) -> MethodOutput:
               if k == "entry" and (l.get("section_start") or (i > 0 and kinds[i - 1] != "entry"))}
     if len(starts) < 1 or len(starts | firsts) < 2:
         return MethodOutput(None)
-    return _groups_to_output(_group(payload, lambda i: i in starts), payload, "marker_split")
+    # a citation that ends without a year, pages or a full stop: a new one also starts at an author
+    # list with initials when the lines since the last start already read as a whole citation (a
+    # title and a year). These extra starts never decide whether the method runs.
+    extra, current = set(), []
+    for i, (line, kind) in enumerate(zip(lines, kinds)):
+        if kind != "entry" or line.get("section_start"):
+            current = [i] if kind == "entry" else []
+            continue
+        if i in starts:
+            current = [i]
+            continue
+        if current and _initials_author_start(line["text"]):
+            done = parse_entry([lines[j] for j in current], payload["params"])["entry"]
+            if done["title"] and done["year"]:
+                extra.add(i)
+                current = [i]
+                continue
+        current.append(i)
+    return _groups_to_output(_group(payload, lambda i: i in starts or i in extra), payload, "marker_split")
+
+
+_BARE_NUMBER = re.compile(r"^\s*(\d{1,3})\s+(?=[A-Z(\[\"“‘])")
+BARE_RUN_MIN = 3
+
+
+def _bare_number_starts(lines: list[dict], kinds: list[str]) -> set[int]:
+    """Entry lines that begin with a list number with no dot or bracket ("12 Doe, A., ..."). They
+    start entries only in a run of at least BARE_RUN_MIN such lines of one section numbered in
+    sequence (each one more, or each one less, than the one before), so a wrapped line that begins
+    with a volume or a page number does not."""
+    out: set[int] = set()
+    run: list[tuple[int, int]] = []
+
+    def close():
+        if len(run) >= BARE_RUN_MIN:
+            out.update(i for i, _ in run)
+
+    step = 0
+    for i, (line, kind) in enumerate(zip(lines, kinds)):
+        if line.get("section_start"):
+            close()
+            run, step = [], 0
+        m = _BARE_NUMBER.match(line["text"]) if kind == "entry" else None
+        if not m:
+            continue
+        value = int(m.group(1))
+        if run and value - run[-1][1] in (1, -1) and (step == 0 or value - run[-1][1] == step):
+            step = value - run[-1][1]
+            run.append((i, value))
+        else:
+            close()
+            run, step = [(i, value)], 0
+    close()
+    return out
+
+
+def _initials_author_start(text: str) -> bool:
+    """A line that starts with an author list holding an initial ("A. Doe, ...", "Doe, A., ...",
+    "Doe A, Roe B, ..."); never a wrapped part."""
+    text = _SPACED_INITIAL.sub(r"\1.", text.strip())
+    if not text or _NOT_A_START.match(text):
+        return False
+    if re.match(r"^(?:[A-Z]\.\s?-?){1,3}\s*[A-Z][a-zà-ɏ'’\-]+|^[A-Z][a-zà-ɏ'’\-]+,?\s+(?:[A-Z]\.\s?){1,3}(?=[\s,;&]|$)",
+                text):
+        return True
+    segs = _comma_segments(text)
+    return bool(segs) and _author_run(segs[:2]) > 0 and _author_segment(segs[0][1])[1]
 
 
 def hanging_indent_split(payload) -> MethodOutput:

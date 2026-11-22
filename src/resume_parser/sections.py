@@ -1,7 +1,9 @@
 """Stage 3: section detection (where each section starts and ends, raw labels).
 
 Input: the stage 2 lines. Output: blocks in reading order. The first block (before any
-heading) is the personal block; every other block starts at a heading line.
+heading) is the personal block; every other block starts at a heading line, or at the first
+line of a new column (stage 1 column_start) when that line is not a heading: such a block has
+no heading and is mapped by stage 4 from its content.
 
 Heading signals (thresholds.json, stage3_sections, to calibrate):
 - vocabulary: the whole line, normalised, is an alias in config/section_aliases.json, or
@@ -180,6 +182,10 @@ def build_blocks(lines: list[dict], headings: dict[int, tuple], p: dict, use_con
             guess, label, source = headings[i]
             blocks.append({"heading_raw": line["text"], "heading_line": line, "guess": guess, "label": label,
                            "guess_source": source, "lines": []})
+        elif line.get("column_start") and len(blocks) > 1:
+            # a new column (stage 1 column order) never continues the section before it
+            blocks.append({"heading_raw": None, "heading_line": None, "guess": None, "label": None,
+                           "guess_source": "column", "lines": [line]})
         else:
             blocks[-1]["lines"].append(line)
     if use_content:

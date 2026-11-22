@@ -9,7 +9,7 @@ on the same visual row. pdfminer has no table finder, so in_table is always Fals
 
 from __future__ import annotations
 
-from resume_parser.extract.lines import assign_rows, is_bold, make_line, number_lines, split_segments
+from resume_parser.extract.lines import assign_rows, column_order, is_bold, make_line, number_lines, split_segments
 from resume_parser.schema import Method, MethodOutput, Reason
 
 
@@ -70,7 +70,7 @@ def layout_lines(source) -> MethodOutput:
     if not lines:
         return MethodOutput(None, (Reason("empty_page"),))
     width, height = source.size
-    return MethodOutput({"method": "pdfminer_layout", "lines": number_lines(lines, source.page),
+    return MethodOutput({"method": "pdfminer_layout", "lines": number_lines(column_order(lines, source.params), source.page),
                          "width": width, "height": height})
 
 

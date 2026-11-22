@@ -19,7 +19,8 @@ import make_synthetic_resumes as synth
 from resume_parser.pipeline import run_pipeline
 
 SECTIONS = ("education", "experience", "publications")
-WIDTH = {"layout_one_column": 110, "layout_two_columns": 48, "layout_sidebar": 70, "layout_tables": None}
+WIDTH = {"layout_one_column": 110, "layout_two_columns": 48, "layout_two_columns_unequal": 48,
+         "layout_sidebar": 70, "layout_sidebar_right": 66, "layout_tables": None}
 
 
 def _entries(kind):
@@ -50,7 +51,7 @@ def stage_results(stem: str, folder) -> dict[str, bool]:
                 s1 &= None not in at and all(b == a + 1 for a, b in zip(at, at[1:]))
                 order.append(at[0])
         s1 &= None not in order and order == sorted(order)
-        if stem == "layout_sidebar" and None not in order:
+        if stem.startswith("layout_sidebar") and None not in order:
             side = [idx(s) for s in synth.LAYOUT_SKILLS] + [idx("CONTACT"), idx("SKILLS")]
             s1 &= all(i is not None and not (order[0] < i < order[-1]) for i in side)
     else:  # tables: one row of cells per entry, in row order
@@ -84,20 +85,26 @@ def first_failing(results: dict[str, bool]) -> str | None:
     return next((s for s in ("S1", "S4", "S5") if not results[s]), None)
 
 
-KNOWN_FAILURES = {
-    "layout_two_columns": "S1: the two columns are read line by line across the page, not column by column",
-    "layout_sidebar": "S1: the sidebar lines are read in the middle of the main text",
-}
+# (layout, stage) pairs that fail today, with the reason; no parser rule is changed for them
+_NARROW = ("S5: entries wrapped in a narrow column (a date part, an institution or a venue on the next "
+           "line) are read incompletely")
+KNOWN_FAILURES = {("layout_two_columns", "S5"): _NARROW, ("layout_two_columns_unequal", "S5"): _NARROW}
+_RESULTS: dict = {}
 
 
-@pytest.mark.parametrize("stem", [
-    pytest.param(stem, marks=pytest.mark.xfail(strict=False, reason=KNOWN_FAILURES[stem]))
-    if stem in KNOWN_FAILURES else stem
-    for stem in synth.LAYOUTS
+def _results(stem, folder):
+    if stem not in _RESULTS:
+        _RESULTS[stem] = stage_results(stem, folder)
+    return _RESULTS[stem]
+
+
+@pytest.mark.parametrize("stem,stage", [
+    pytest.param(stem, stage, marks=pytest.mark.xfail(strict=False, reason=KNOWN_FAILURES[(stem, stage)]))
+    if (stem, stage) in KNOWN_FAILURES else (stem, stage)
+    for stem in synth.LAYOUTS for stage in ("S1", "S4", "S5")
 ])
-def test_layout_reads_in_order_and_gives_the_entries(stem, tmp_path):
-    results = stage_results(stem, tmp_path)
-    assert first_failing(results) is None, results
+def test_layout_stage(stem, stage, tmp_path):
+    assert _results(stem, tmp_path)[stage], (stem, stage)
 
 
 def test_layout_content_is_invented_and_the_same_for_every_layout():

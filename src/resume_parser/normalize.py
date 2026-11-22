@@ -2,7 +2,9 @@
 
 Each stage 3 block is one unit ("block_001", ...) and gets its own method choice:
   exact_alias_map             the normalised heading is an alias (the first block, which has
-                              no heading, is the personal block)                 confidence 1.0
+                              no heading, is the personal block; a later block that starts a
+                              new column with no heading is left to the other methods)
+                                                                                 confidence 1.0
   fuzzy_alias_match           fuzz.ratio of the whole normalised heading against every alias
                               is at least fuzzy_min (thresholds.json)            confidence ratio/100
   content_guess               the block's content: citations -> publications, degree words ->
@@ -62,6 +64,8 @@ def _mapping(name: str, original: str | None, confidence: float, source: str) ->
 def exact_alias_map(payload) -> MethodOutput:
     block, _p = payload
     if block["heading_line"] is None:
+        if block.get("guess_source") == "column":  # a column with no heading: mapped by content
+            return MethodOutput(None)
         return MethodOutput(_mapping("personal", None, 1.0, "position"))
     found = exact_alias(block["heading_raw"])
     if not found:

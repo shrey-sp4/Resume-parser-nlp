@@ -114,3 +114,118 @@ def test_garbled_rate_counts_cid_and_replacement_chars():
     assert garbled_rate("(cid:12)abcd") == pytest.approx(1 / 5)
     assert garbled_rate("ab�") == 0.25  # the private-use icon does not count
     assert garbled_rate("plain text") == 0.0
+
+
+# ---------------------------------------------------------------- column reading order
+
+from resume_parser.extract.lines import column_order  # noqa: E402
+
+COLS = load_thresholds()["stage1_extract"]
+
+
+def _l(i, text, x0, x1, top, in_table=False):
+    return {"id": f"p001_l{i:04d}", "page": 1, "text": text, "bbox": [x0, top, x1, top + 10], "font_size": 10,
+            "bold": 0.0, "in_table": in_table, "row_id": f"r{i}", "segment_index": 0, "cell_row": None,
+            "cell_col": None}
+
+
+def test_one_column_and_table_pages_are_returned_unchanged():
+    one = [_l(i, f"Body line number {i} of a plain one column page", 56, 520, 100 + 14 * i) for i in range(20)]
+    assert column_order(one, COLS) is one
+    table = [_l(i, f"cell {i}", 56 + 160 * (i % 3), 200 + 160 * (i % 3), 100 + 14 * (i // 3), in_table=True)
+             for i in range(18)]
+    assert column_order(table, COLS) is table and not any("column" in line for line in table)
+
+
+def test_right_aligned_dates_are_not_a_second_column():
+    lines = []
+    for k in range(8):
+        lines.append(_l(2 * k, f"Lecturer {k}, Hillcrest University", 56, 300, 100 + 14 * k))
+        lines.append(_l(2 * k + 1, f"20{10 + k} - 20{11 + k}", 470, 540, 100 + 14 * k))
+    assert column_order(lines, COLS) is lines
+
+
+def _band(start_id, top, rows, tag):
+    out = []
+    for k in range(rows):  # a two-column band, rows side by side
+        out.append(_l(start_id + 2 * k, f"{tag} left line {k}", 56, 280, top + 14 * k))
+        out.append(_l(start_id + 2 * k + 1, f"{tag} right line {k}", 310, 540, top + 14 * k))
+    return out
+
+
+def test_mixed_page_reads_full_width_lines_in_place_and_columns_in_turn():
+    name = _l(0, "Talia Vonbrook, a name line written right across the whole page width", 56, 540, 80)
+    between = _l(99, "A full-width heading line that runs across both columns of the page", 56, 540, 250)
+    lines = [name] + _band(1, 100, 10, "a") + [between] + _band(30, 270, 10, "b")
+    out = column_order(lines, COLS)
+    assert [line["text"] for line in out] == (
+        [name["text"]] + [f"a left line {k}" for k in range(10)] + [f"a right line {k}" for k in range(10)]
+        + [between["text"]] + [f"b left line {k}" for k in range(10)] + [f"b right line {k}" for k in range(10)])
+    assert [line["column"] for line in out][:2] == ["full", "left"]
+    assert [line["text"] for line in out if line["column_start"]] == [
+        "a left line 0", "a right line 0", "b left line 0", "b right line 0"]
+    # much full-width text across the gutter: not a column page, the order stays as it is
+    busy = [name] + _band(1, 100, 6, "a") + [_l(60 + k, f"one column text line {k} across the gutter", 56, 540,
+                                                 190 + 14 * k) for k in range(6)]
+    assert column_order(busy, COLS) is busy
+
+
+def test_column_pages_are_read_column_by_column_and_noted(tmp_path):
+    for stem in ("layout_two_columns", "layout_sidebar", "layout_sidebar_right", "layout_two_columns_unequal"):
+        result = _stage1(synth.LAYOUTS[stem](tmp_path / f"{stem}.pdf"))
+        lines = _lines(result)
+        assert all("column" in line for line in lines), stem
+        assert result.metrics["notes"] == [{"code": "columns_reordered", "detail": "page_001", "section": None}]
+    plain = _stage1(synth.LAYOUTS["layout_one_column"](tmp_path / "one.pdf"))
+    assert plain.metrics["notes"] == [] and not any("column" in line for line in _lines(plain))
+
+
+def test_a_sidebar_without_headings_stays_out_of_the_main_sections(tmp_path):
+    record = run_pipeline(synth.make_layout_sidebar_no_headings(tmp_path / "side.pdf"))
+    sections = record.results["stage4"].data["sections"]
+    for word in synth.LAYOUT_SKILLS + synth.SIDEBAR_NO_HEADINGS_EXTRA:
+        homes = [s["name"] for s in sections if any(word in line["text"] for line in s["lines"])]
+        assert homes and not set(homes) & {"education", "experience", "publications"}, word
+    assert len(record.main["experience"]) == 2 and len(record.main["publications"]) == 2
+
+
+def test_column_notes_are_flags_only_and_never_change_the_decision(tmp_path, monkeypatch):
+    from resume_parser.extract import base
+    from resume_parser.writer import build_review_queue
+
+    pdf = synth.LAYOUTS["layout_two_columns"](tmp_path / "two.pdf")
+    with_notes = run_pipeline(pdf)
+    monkeypatch.setattr(base, "_column_notes", lambda result, params: [])
+    without = run_pipeline(pdf)
+    codes = [f["code"] for f in with_notes.sidecar["flags"]]
+    assert "columns_reordered" in codes and "columns_reordered" not in [f["code"] for f in without.sidecar["flags"]]
+    assert with_notes.results["stage1"].status == without.results["stage1"].status
+    for key in ("decision", "decision_reasons", "section_scores"):
+        assert with_notes.sidecar[key] == without.sidecar[key], key
+    entry = lambda r: {"resume_id": r.resume_id, "resume_file": r.resume_file, "decision": r.sidecar["decision"],  # noqa: E731
+                       "reasons": r.sidecar["decision_reasons"], "flags_count": 0}
+    assert build_review_queue({"resumes": [entry(with_notes)]}) == build_review_queue({"resumes": [entry(without)]})
+
+
+def test_column_order_is_deterministic(tmp_path):
+    pdf = synth.LAYOUTS["layout_sidebar"](tmp_path / "s.pdf")
+    assert _lines(_stage1(pdf)) == _lines(_stage1(pdf))
+
+
+def test_a_narrow_strip_of_dates_and_places_is_not_a_sidebar(tmp_path):
+    from resume_parser.extract.lines import find_gutter
+
+    result = _stage1(synth.make_layout_dates_and_places(tmp_path / "dates.pdf"))
+    lines = _lines(result)
+    assert not any("column" in line for line in lines)
+    assert not any(n["code"] == "columns_reordered" for n in result.metrics["notes"])
+    # the strip is narrow and about a third date-only: it passes the 50% limit of a wide side,
+    # so it is the narrow-side limit that keeps the page as it is
+    loose_dates = find_gutter(lines, COLS["column_gutter_min_pt"], COLS["column_cross_max"], COLS["column_min_lines"],
+                              COLS["column_side_cover_min"], COLS["column_min_width"], COLS["column_date_only_max"])
+    assert loose_dates is not None
+    # a real sidebar, on either side, is still read after the main text
+    for stem in ("layout_sidebar", "layout_sidebar_right"):
+        side = _lines(_stage1(synth.LAYOUTS[stem](tmp_path / f"{stem}.pdf")))
+        assert all("column" in line for line in side), stem
+        assert [line["text"] for line in side][-1] in synth.LAYOUT_SKILLS, stem

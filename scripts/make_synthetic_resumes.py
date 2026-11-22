@@ -520,8 +520,92 @@ def make_layout_tables(path: Path) -> Path:
     return path
 
 
+def make_layout_two_columns_unequal(path: Path) -> Path:
+    """Two columns of unequal length: education and experience on the left, only the
+    publications on the right (a shorter column)."""
+    c = _new_canvas(path, "synthetic layout two unequal columns")
+    y = _text(c, MARGIN, HEIGHT - MARGIN, "name", LAYOUT_NAME)
+    y = _text(c, MARGIN, y, "contact", LAYOUT_CONTACT) - 6
+    mid = WIDTH / 2 + 6
+    _column(c, MARGIN, y, [("EDUCATION", [t for t, _ in LAYOUT_EDU]), ("EXPERIENCE", [t for t, _ in LAYOUT_EXP]),
+                           ("SKILLS", [", ".join(LAYOUT_SKILLS)])], 48)
+    _column(c, mid, y, [("PUBLICATIONS", [t for t, _ in LAYOUT_PUB])], 48)
+    c.showPage()
+    c.save()
+    return path
+
+
+def make_layout_sidebar_right(path: Path) -> Path:
+    """The main text on the left, a narrow sidebar (contact and skills) on the right."""
+    c = _new_canvas(path, "synthetic layout right sidebar")
+    main_x, side_x = MARGIN, WIDTH - 150
+    top = HEIGHT - MARGIN
+    y = _text(c, main_x, top, "name", LAYOUT_NAME)
+    _column(c, main_x, y, [("EDUCATION", [t for t, _ in LAYOUT_EDU]), ("EXPERIENCE", [t for t, _ in LAYOUT_EXP]),
+                           ("PUBLICATIONS", [t for t, _ in LAYOUT_PUB])], 66)
+    y = _text(c, side_x, top, "heading", "CONTACT")
+    for part in ("talia.vonbrook@example.org", "+00 0000 000 009", "Fakeville"):
+        y = _text(c, side_x, y, "contact", part)
+    y = _text(c, side_x, y, "heading", "SKILLS")
+    for skill in LAYOUT_SKILLS:
+        y = _text(c, side_x, y, "body", skill)
+    c.showPage()
+    c.save()
+    return path
+
+
+def make_layout_sidebar_no_headings(path: Path) -> Path:
+    """A left sidebar with no headings at all (contact lines, then skills), next to the main text."""
+    c = _new_canvas(path, "synthetic layout sidebar without headings")
+    side_x, main_x = 36, 196
+    top = HEIGHT - MARGIN
+    y = top
+    for part in ("talia.vonbrook@example.org", "+00 0000 000 009", "Fakeville", *LAYOUT_SKILLS, "Hiking", "Chess"):
+        y = _text(c, side_x, y, "body", part)
+    y = _text(c, main_x, top, "name", LAYOUT_NAME)
+    _column(c, main_x, y, [("EDUCATION", [t for t, _ in LAYOUT_EDU]), ("EXPERIENCE", [t for t, _ in LAYOUT_EXP]),
+                           ("PUBLICATIONS", [t for t, _ in LAYOUT_PUB])], 70)
+    c.showPage()
+    c.save()
+    return path
+
+
+DATES_AND_PLACES_JOBS = [
+    ("Associate Professor, Brightford Institute of Technology", "2020 - Present", "Brightford, Fakeland",
+     "Teaches toy optics and runs the pretend photonics lab", "Full time"),
+    ("Research Engineer, Glimmerworks Labs Pvt Ltd", "2017 - 2020", "Glimmer City, Fakeland",
+     "Built invented light sensors for imaginary clients", "Contract"),
+    ("Postdoctoral Fellow, Westmere University", "2015 - 2017", "Westmere, Fakeland",
+     "Studied quiet lattices in made-up crystals", "Full time"),
+    ("Lecturer, Calder Valley College", "2013 - 2015", "Calder, Fakeland",
+     "Taught first-year physics to fictional students", "Part time"),
+]
+
+
+def make_layout_dates_and_places(path: Path) -> Path:
+    """One column of jobs with the dates, the place and the kind of post right-aligned on the
+    same rows (a narrow strip of dates and short details, not a sidebar)."""
+    c = _new_canvas(path, "synthetic layout dates and places")
+    y = _text(c, MARGIN, HEIGHT - MARGIN, "name", LAYOUT_NAME)
+    y = _text(c, MARGIN, y, "contact", LAYOUT_CONTACT)
+    y = _text(c, MARGIN, y, "heading", "EXPERIENCE")
+    right = WIDTH - MARGIN
+    for job, dates, place, note, kind in DATES_AND_PLACES_JOBS:
+        for left, right_text in ((job, dates), (note, place), ("", kind)):
+            c.setFont("Helvetica", 9.5)
+            if left:
+                c.drawString(MARGIN, y, left)
+            c.drawRightString(right, y, right_text)
+            y -= 14
+    c.showPage()
+    c.save()
+    return path
+
+
 LAYOUTS = {"layout_one_column": make_layout_one_column, "layout_two_columns": make_layout_two_columns,
-           "layout_sidebar": make_layout_sidebar, "layout_tables": make_layout_tables}
+           "layout_two_columns_unequal": make_layout_two_columns_unequal, "layout_sidebar": make_layout_sidebar,
+           "layout_sidebar_right": make_layout_sidebar_right, "layout_tables": make_layout_tables}
+SIDEBAR_NO_HEADINGS_EXTRA = ["Hiking", "Chess"]
 
 
 def main(argv: list[str] | None = None) -> int:

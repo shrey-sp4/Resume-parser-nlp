@@ -326,10 +326,14 @@ def optional_methods() -> list[str]:
 
 
 def flags_from(result: StageResult) -> list[dict]:
-    """Turn the reasons of a WARN or FAIL stage into sidecar flags."""
+    """Turn the reasons of a WARN or FAIL stage into sidecar flags. Notes a stage leaves in
+    metrics["notes"] (stage 1 column notes) become flags whatever the status, without changing it."""
+    notes = [{"section": n.get("section") or "document", "code": n["code"],
+              "detail": f"{result.stage}: {n['detail']}" if n.get("detail") else result.stage}
+             for n in (result.metrics or {}).get("notes", [])]
     if result.status is Status.OK:
-        return []
-    flags = []
+        return notes
+    flags = notes
     for r in result.reasons:
         if is_info(r.code):
             continue

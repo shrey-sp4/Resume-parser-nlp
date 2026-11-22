@@ -17,7 +17,9 @@ Page score (0..1), from label-free checks (thresholds.json, stage1_checks, to ca
 - halved when more than glued_max of the words look glued, so such a page cannot be
   accepted but still ranks against the other methods.
 The separate values (garbled_rate, glued_rate, glued_words, overlap, words, lines) are
-recorded with every attempt. The first method in order that reaches the accept threshold
+recorded with every attempt. Pages read column by column (extract/lines.py column_order) are
+noted as columns_reordered, pages that only may have columns as possible_columns; these notes
+go to the sidecar flags and never change a status, a decision or a score. The first method in order that reaches the accept threshold
 wins; otherwise the best score wins with WARN; ties go to the earlier method.
 """
 
@@ -26,13 +28,13 @@ from __future__ import annotations
 from contextlib import ExitStack
 from pathlib import Path
 
-from resume_parser.extract.lines import garbled_rate, glued_words, text_of, word_overlap
+from resume_parser.extract.lines import garbled_rate, glued_words, possible_columns, text_of, word_overlap
 from resume_parser.extract.ocr_extractor import OCR_TESSERACT
 from resume_parser.extract.pdfminer_extractor import LAYOUT
 from resume_parser.extract.pdfplumber_extractor import LOOSE_SPACING, WORDS_AND_TABLES
 from resume_parser.extract.source import PageSource
 from resume_parser.pipeline import run_with_fallbacks
-from resume_parser.schema import AttemptStatus, Context, Method, StageResult, Unit
+from resume_parser.schema import AttemptStatus, Context, Method, Reason, StageResult, Unit
 
 
 def _first_not_accepted(attempts) -> bool:
@@ -159,4 +161,19 @@ def run_layout(pdf_path: Path, ctx: Context) -> StageResult:
             run_all=True,
         )
     result.metrics.update(_glued_page_counts(result, params["glued_max"]))
+    result.metrics["notes"] = _column_notes(result, params)
     return result
+
+
+def _column_notes(result: StageResult, params: dict) -> list[dict]:
+    """Per page: columns_reordered when the chosen lines were read column by column,
+    possible_columns when only the looser gutter test finds columns. They become sidecar flags
+    (pipeline.flags_from) but never change a stage status, a decision or a score."""
+    notes = []
+    for key, page in sorted((result.data or {}).items()):
+        lines = (page or {}).get("lines") or []
+        if any("column" in line for line in lines):
+            notes.append(Reason("columns_reordered", key).to_dict())
+        elif lines and possible_columns(lines, params):
+            notes.append(Reason("possible_columns", key).to_dict())
+    return notes

@@ -137,6 +137,26 @@ always picks the same method.
     out, and an ignore list (PhD, LaTeX, MATLAB, BibTeX, ...) never counts.
   The separate values (garbled rate, glued rate and count, overlap, words, lines) are stored
   with every attempt. The stage metrics count the pages over the glued-word limit.
+- Reading order with columns (`extract/lines.py`, `column_order`, settings in
+  `stage1_extract`): lines are read top to bottom, unless the page has a clear vertical gutter.
+  A gutter is an empty band at least 12 pt wide, crossed by lines over at most 10% of the
+  page's text height, with text on both sides: at least 5 lines per side, covering at least
+  30% of the text height, spanning at least 15% of the text width, and with fewer than half of
+  them date-only (so a column of right-aligned dates next to one-column text is not a second
+  column); a narrow side (under 35% of the text width) needs fewer than a quarter date-only
+  lines, as a narrow strip of dates and places beside entries is not a sidebar. Table cells do
+  not count. Then:
+  - lines crossing the gutter are full width (a name, a heading across the page); they stay
+    in place and cut the page into bands; in a band the left column is read, then the right;
+  - a side narrower than 35% of the text width is a sidebar, read after the main text as one
+    block;
+  - reordered lines get `column` (full, left, right) and `column_start`; stage 3 starts a new
+    block at a `column_start` line, so a sidebar or a column without a heading never joins the
+    section before it (stage 4 maps such a block from its content).
+  A page without a clear gutter keeps its lines exactly as before, with no column fields. Pages read by columns get the note
+  `columns_reordered`; pages that only pass a looser gutter test (8 pt, 25%, 3 lines, 15%) get
+  `possible_columns`. Both are sidecar flags only: they never change a stage status, a
+  decision, a score or the review queue.
 - Gate: FAIL only when no page is usable. Some unusable pages give WARN.
 - With `--save-stages`, every method's lines per page are also saved (`stage1_methods.json`).
 

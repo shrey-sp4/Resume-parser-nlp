@@ -59,6 +59,44 @@ _BLOCKED = ("teach", "course", "subject", "project", "responsib", "service", "ad
             "interest", "skill", "summary", "objective", "profile", "membership")
 
 
+# job headings that contain a blocked word but are still about jobs ("teaching ... experience",
+# "present position"); each one was checked by hand, so the word list keeps guarding the rest
+_JOB_HEADINGS_WITH_BLOCKED_WORDS = {
+    "research and teaching experience", "research & teaching experience", "teaching and industrial experience",
+    "teaching and industry experience", "present position", "present employment", "employment profile",
+}
+NEW_EXPERIENCE_HEADINGS = (
+    "post doctoral experience", "post doctoral research experience", "post-doctoral research experience",
+    "research and teaching experience", "research & teaching experience", "teaching and industrial experience",
+    "teaching and industry experience", "present position", "current position", "current appointment",
+    "present employment", "previous positions", "academic and professional positions", "employment profile",
+)
+
+
+def test_new_experience_headings_map_only_as_whole_headings():
+    fuzzy_min = load_thresholds()["stage4_normalize"]["fuzzy_min"]
+    for heading in NEW_EXPERIENCE_HEADINGS:
+        assert exact_alias(heading.title()) == ("experience", "experience"), heading
+        assert exact_alias("2. " + heading.upper() + ":") == ("experience", "experience"), heading
+    for heading in ("Research Interests", "Professional Activities", "Academic Service", "Career Objective"):
+        found = exact_alias(heading) or fuzzy_alias(heading, fuzzy_min)
+        assert found is None or found[0] != "experience", heading
+    # inside a longer line an exact-only alias is neither an exact nor a fuzzy match
+    for line in ("Present Position: Assistant Professor, Hillcrest University",
+                 "Current position held since 2019 in the Department of Physics"):
+        assert exact_alias(line) is None
+        found = fuzzy_alias(line, fuzzy_min)
+        assert found is None or found[0] != "experience", line
+
+
+def test_new_experience_heading_starts_an_experience_section(tmp_path):
+    lines = (PERSONAL_TOP + [("heading", "EDUCATION")] + EDU_LINES + [("heading", "PRESENT POSITION")]
+             + EXP_LINES[:1] + [("heading", "PREVIOUS POSITIONS")] + EXP_LINES[1:])
+    _stage3, stage4 = _run(synth.make_lines_pdf(tmp_path / "positions.pdf", lines))
+    names = [name for name, _heading in _sections(stage4)]
+    assert names.count("experience") == 2 and "other" not in names
+
+
 def _exact_only() -> dict[str, list[str]]:
     from resume_parser.schema import load_config
 
@@ -85,7 +123,8 @@ def test_exact_only_aliases_are_distinct_and_keep_the_rules():
             key = norm_heading(alias)
             assert key not in seen, alias
             seen.add(key)
-            assert not any(word in key for word in _BLOCKED), alias  # jobs only; no other-section words
+            if key not in _JOB_HEADINGS_WITH_BLOCKED_WORDS:
+                assert not any(word in key for word in _BLOCKED), alias  # jobs only; no other-section words
     assert exact_alias("Positions") is None and exact_alias("Preprints") is None  # left out on purpose
     assert exact_alias("Courses Taught") == ("other", "teaching")  # an old alias keeps its section
 

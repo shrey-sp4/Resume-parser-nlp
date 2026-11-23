@@ -85,10 +85,9 @@ def first_failing(results: dict[str, bool]) -> str | None:
     return next((s for s in ("S1", "S4", "S5") if not results[s]), None)
 
 
-# (layout, stage) pairs that fail today, with the reason; no parser rule is changed for them
-_NARROW = ("S5: entries wrapped in a narrow column (a date part, an institution or a venue on the next "
-           "line) are read incompletely")
-KNOWN_FAILURES = {("layout_two_columns", "S5"): _NARROW, ("layout_two_columns_unequal", "S5"): _NARROW}
+# (layout, stage) pairs that fail today, with the reason; no parser rule is changed for them.
+# The two-column S5 failures (entries wrapped in a narrow column) are fixed by entities/wraps.py.
+KNOWN_FAILURES: dict = {}
 _RESULTS: dict = {}
 
 
@@ -111,3 +110,64 @@ def test_layout_content_is_invented_and_the_same_for_every_layout():
     stems = list(synth.LAYOUTS)
     assert len({str(synth.layout_ground_truth(s)["education"]) for s in stems}) == 1
     assert all(synth.layout_ground_truth(s)["resume_file"] == f"{s}.pdf" for s in stems)
+
+
+# ---------------------------------------------------------------- layouts wrapped by the PDF library
+# Different invented content, with line breaks made by the library's own text wrapping (no
+# hand-placed breaks), so the wrapped-line rule is checked on breaks it was not written against.
+# A stage that fails today is marked xfail with its reason; no rule is added to fit these pages.
+AUTO_KNOWN_FAILURES = {
+    ("auto_two_columns", "S1"): "S1: one wrapped left-column line is read as full width and lands inside the right column",
+    ("auto_two_columns", "S4"): "S4: follows from S1 (the second degree, read as full width, starts a block outside education)",
+    ("auto_two_columns", "S5"): "S5: follows from the S1 reading order (a degree and a paper run together)",
+    ("auto_sidebar", "S1"): "S1: the page is not reordered by columns, so sidebar lines sit between main lines",
+    ("auto_sidebar", "S5"): "S5: the job title Senior Research Engineer is not in config/titles.json",
+}
+_AUTO_RESULTS: dict = {}
+
+
+def auto_stage_results(stem: str, folder) -> dict[str, bool]:
+    record = run_pipeline(synth.AUTO_LAYOUTS[stem](folder / f"{stem}.pdf"))
+    lines = [_norm(l["text"]) for page in record.results["stage1"].data.values() for l in page["lines"]]
+
+    def idx(text):
+        return next((i for i, line in enumerate(lines) if text in line), None)
+
+    entries = {"education": synth.AUTO_EDU, "experience": synth.AUTO_EXP, "publications": synth.AUTO_PUB}
+    # S1: headings and the start of every entry in order (the library chooses where lines break)
+    order = []
+    for heading, kind in (("EDUCATION", "education"), ("EXPERIENCE", "experience"), ("PUBLICATIONS", "publications")):
+        order.append(idx(heading))
+        order += [idx(" ".join(text.split()[:4])) for text, _gt in entries[kind]]
+    s1 = None not in order and order == sorted(order)
+    if stem == "auto_sidebar" and s1:
+        side = [idx(s) for s in synth.AUTO_SKILLS] + [idx("CONTACT"), idx("SKILLS")]
+        s1 = all(i is not None and not (order[0] < i < order[-1]) for i in side)
+    # S4: entry text in the right section
+    sections = record.results["stage4"].data["sections"]
+    text_of = {sec["block_id"]: " ".join(_norm(l["text"]) for l in sec["lines"]) for sec in sections}
+    s4 = True
+    for kind in SECTIONS:
+        for _text, g in entries[kind]:
+            key = " ".join((g.get("institution") or g.get("title")).split()[:3])
+            s4 &= kind in {sec["name"] for sec in sections if key in text_of[sec["block_id"]]}
+    # S5: every entry matched with correct fields, no extra entry, right name
+    gt = synth.auto_ground_truth(stem)
+    s5 = record.main is not None and record.main["candidate_name"] == gt["candidate_name"]
+    for kind in SECTIONS:
+        pred = record.main[kind] if record.main else []
+        pairs, _ = ev.match(gt[kind], pred, kind)
+        s5 &= len(pairs) == len(gt[kind]) == len(pred) and not any(
+            ev.field_errors(kind, gt[kind][gi], pred[pi]) for gi, pi, _ in pairs)
+    return {"S1": bool(s1), "S4": bool(s4), "S5": bool(s5)}
+
+
+@pytest.mark.parametrize("stem,stage", [
+    pytest.param(stem, stage, marks=pytest.mark.xfail(strict=False, reason=AUTO_KNOWN_FAILURES[(stem, stage)]))
+    if (stem, stage) in AUTO_KNOWN_FAILURES else (stem, stage)
+    for stem in synth.AUTO_LAYOUTS for stage in ("S1", "S4", "S5")
+])
+def test_auto_wrapped_layout_stage(stem, stage, tmp_path):
+    if stem not in _AUTO_RESULTS:
+        _AUTO_RESULTS[stem] = auto_stage_results(stem, tmp_path)
+    assert _AUTO_RESULTS[stem][stage], (stem, stage)

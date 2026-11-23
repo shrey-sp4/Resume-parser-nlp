@@ -29,6 +29,7 @@ from resume_parser.entities import education as edu
 from resume_parser.entities import experience as exp
 from resume_parser.entities import publications as pub
 from resume_parser.entities.personal import NAME_METHODS, check_personal, personal_payload
+from resume_parser.entities.wraps import join_column_wraps
 from resume_parser.pipeline import run_with_fallbacks
 from resume_parser.schema import TARGET_SECTIONS, Context, StageResult, Unit
 
@@ -42,19 +43,20 @@ def run_entities(pdf_path: Path, ctx: Context) -> StageResult:
     params = ctx.thresholds["stage5_entities"]
     stage4 = ctx.results["stage4"]
     by_content = frozenset(b for b, u in stage4.per_unit.items() if u.method_used == "content_guess")
+    joined = join_column_wraps(document, params)  # wrapped lines in narrow columns; the name keeps the original
     units = []
     for section in TARGET_SECTIONS:
         if section == "personal":
             payload, methods = personal_payload(document, ctx.resume_file, params), NAME_METHODS
             check = check_personal
         elif section == "education":
-            payload, methods = edu.education_payload(document, params, by_content), edu.SPLIT_METHODS
+            payload, methods = edu.education_payload(joined, params, by_content), edu.SPLIT_METHODS
             check = lambda data, p=params: edu.check_education(data, p)  # noqa: E731
         elif section == "experience":
-            payload, methods = exp.experience_payload(document, params, by_content), exp.SPLIT_METHODS
+            payload, methods = exp.experience_payload(joined, params, by_content), exp.SPLIT_METHODS
             check = lambda data, p=params: exp.check_experience(data, p)  # noqa: E731
         else:
-            payload, methods = pub.publications_payload(document, params), pub.SPLIT_METHODS
+            payload, methods = pub.publications_payload(joined, params), pub.SPLIT_METHODS
             check = lambda data, p=params: pub.check_publications(data, p)  # noqa: E731
         units.append(Unit(unit_id=section, payload=payload, methods=methods,
                           accept_threshold=by_section[section], section=section, check=check))

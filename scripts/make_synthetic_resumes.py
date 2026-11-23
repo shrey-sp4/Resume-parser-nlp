@@ -602,6 +602,95 @@ def make_layout_dates_and_places(path: Path) -> Path:
     return path
 
 
+# ---------------------------------------------------------------- layouts wrapped by the PDF library
+# The same kinds of entry, with different invented content, laid out as paragraphs in frames of
+# the column width, so line breaks come from the library's own text wrapping (no hand-placed
+# breaks, no hanging indent). Used by tests/test_layouts.py to check the wrapped-line rule on
+# breaks it was not written against.
+
+AUTO_EDU = [("Ph.D. in Imaginary Acoustics, Northbridge Institute of Advanced Learning, 2009 - 2014",
+             _edu("Ph.D.", "doctorate", "Imaginary Acoustics", "Northbridge Institute of Advanced Learning")),
+            ("M.Tech. in Pretend Signal Processing, Larkspur Valley University of Technology, 2007 - 2009",
+             _edu("M.Tech.", "masters", "Pretend Signal Processing", "Larkspur Valley University of Technology"))]
+AUTO_EXP = [("Assistant Professor, Department of Sound Studies, Hollowmere University of Science, 2018 - Present",
+             _exp("Assistant Professor", "Department of Sound Studies, Hollowmere University of Science",
+                  "2018 - Present", "academic")),
+            ("Senior Research Engineer, Echoquill Instruments Pvt Ltd, Quietford, 2014 - 2018",
+             _exp("Senior Research Engineer", "Echoquill Instruments Pvt Ltd", "2014 - 2018", "industry"))]
+AUTO_PUB = [("1. R. Ondermere, P. Saltwick. Listening to silent membranes in invented halls. "
+             "Journal of Fictional Acoustics and Vibration, 2022.",
+             _pub("Listening to silent membranes in invented halls", "journal", "2022",
+                  "Journal of Fictional Acoustics and Vibration")),
+            ("2. R. Ondermere. Echo maps of rooms that were never built. "
+             "Proc. Make-Believe Conference on Audio Engineering, 2016.",
+             _pub("Echo maps of rooms that were never built", "conference", "2016",
+                  "Proc. Make-Believe Conference on Audio Engineering"))]
+AUTO_NAME = "Rhea Ondermere"
+AUTO_CONTACT = "rhea.ondermere@example.org | +00 0000 000 011"
+AUTO_SKILLS = ["Signal theory", "Room modelling", "Soldering"]
+
+
+def auto_ground_truth(stem: str) -> dict:
+    """The ground truth (GT v2) of a library-wrapped layout resume."""
+    return {"resume_file": f"{stem}.pdf", "candidate_name": AUTO_NAME,
+            "education": [gt for _, gt in AUTO_EDU], "experience": [gt for _, gt in AUTO_EXP],
+            "publications": [gt for _, gt in AUTO_PUB],
+            "stated_totals": {"journal": None, "conference": None, "total": None}, "notes": ""}
+
+
+def _flowables(blocks: list[tuple[str, list[str]]]) -> list:
+    from reportlab.lib.styles import ParagraphStyle
+    head = ParagraphStyle("auto_head", fontName="Helvetica-Bold", fontSize=12, leading=16, spaceBefore=8, spaceAfter=4)
+    body = ParagraphStyle("auto_body", fontName="Helvetica", fontSize=9.5, leading=12, spaceAfter=3)
+    out = []
+    for heading, entries in blocks:
+        out.append(Paragraph(heading, head))
+        out += [Paragraph(e, body) for e in entries]
+    return out
+
+
+def _frame(c: canvas.Canvas, x: float, y_top: float, width: float, flowables: list) -> None:
+    from reportlab.platypus import Frame
+    Frame(x, MARGIN, width, y_top - MARGIN, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0,
+          showBoundary=0).addFromList(list(flowables), c)
+
+
+def make_auto_two_columns(path: Path) -> Path:
+    """Name and contact across the page, then two columns filled by the library's text wrapping."""
+    c = _new_canvas(path, "synthetic auto-wrapped two columns")
+    y = _text(c, MARGIN, HEIGHT - MARGIN, "name", AUTO_NAME)
+    y = _text(c, MARGIN, y, "contact", AUTO_CONTACT) - 6
+    col = (WIDTH - 2 * MARGIN - 24) / 2
+    _frame(c, MARGIN, y, col, _flowables([("EDUCATION", [t for t, _ in AUTO_EDU]),
+                                          ("EXPERIENCE", [t for t, _ in AUTO_EXP])]))
+    _frame(c, MARGIN + col + 24, y, col, _flowables([("PUBLICATIONS", [t for t, _ in AUTO_PUB]),
+                                                     ("SKILLS", [", ".join(AUTO_SKILLS)])]))
+    c.showPage()
+    c.save()
+    return path
+
+
+def make_auto_sidebar(path: Path) -> Path:
+    """A narrow left sidebar (contact, skills) next to the main text, both wrapped by the library."""
+    c = _new_canvas(path, "synthetic auto-wrapped sidebar")
+    side_w, gap = 130, 24
+    top = HEIGHT - MARGIN
+    side = _flowables([("CONTACT", ["rhea.ondermere@example.org", "+00 0000 000 011", "Quietford"]),
+                       ("SKILLS", AUTO_SKILLS)])
+    _frame(c, 36, top, side_w, side)
+    main_x = 36 + side_w + gap
+    y = _text(c, main_x, top, "name", AUTO_NAME)
+    _frame(c, main_x, y, WIDTH - main_x - 36, _flowables([("EDUCATION", [t for t, _ in AUTO_EDU]),
+                                                          ("EXPERIENCE", [t for t, _ in AUTO_EXP]),
+                                                          ("PUBLICATIONS", [t for t, _ in AUTO_PUB])]))
+    c.showPage()
+    c.save()
+    return path
+
+
+AUTO_LAYOUTS = {"auto_two_columns": make_auto_two_columns, "auto_sidebar": make_auto_sidebar}
+
+
 LAYOUTS = {"layout_one_column": make_layout_one_column, "layout_two_columns": make_layout_two_columns,
            "layout_two_columns_unequal": make_layout_two_columns_unequal, "layout_sidebar": make_layout_sidebar,
            "layout_sidebar_right": make_layout_sidebar_right, "layout_tables": make_layout_tables}

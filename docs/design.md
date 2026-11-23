@@ -378,6 +378,18 @@ author list alone, not two citations run together and not longer than `max_citat
 coverage), 0 when the section has lines but no entry; the count against a printed total is
 reported, never scored. Words live in `config/publications.json`.
 
+**Wrapped lines in narrow columns** (`entities/wraps.py`, before the methods run): on pages that
+stage 1 reordered by columns, a line that continues the line above in the same column (a date
+part, the end of an institution, a venue) is joined to it, in a copy of the stage 4 document,
+inside education, experience and publications only. Both lines must carry column left or right,
+the same column and page, no table cell, a gap of at most `column_wrap_gap_factor` times the
+column's normal line gap, no outdent and no list marker; and the line above must end unfinished
+(comma, dash, open bracket, "&" or a joining word such as "of"), or the next line must be a
+closing part (lower case start, a dash, only a year or year range, pages, a volume) or, in
+publications, start with a venue lead (In, Proc., Proceedings, Journal, Trans.). Lines without a
+column field are never touched. The joined line keeps the first id and lists the others in
+`joined_ids`, as in stage 2.
+
 **Methods for entry splitting, chosen per section:** `anchor_split`, `table_row_split`,
 `paragraph_split`, then `whole_section_one_entry` (always last, always WARN). Built for
 education; experience starts with `date_anchor_split` and publications with `marker_split` and
@@ -745,6 +757,9 @@ resumes pull a fold down.
 **Layout tests** (`tests/test_layouts.py`, invented content only): one column, two columns, a
 left sidebar and tables, built at test time, each checked at S1 (reading order), S4 (section) and
 S5 (entries). A layout that fails today is marked `xfail(strict=False)` with the failing stage.
+Two more layouts (two columns and a sidebar) use different invented content and let the PDF
+library wrap the text at the column width, so the wrapped-line rule is checked on breaks it was
+not written against; their failures are recorded as found, with no rule added for them.
 
 **Learned publication-field reader (experimental, not in the pipeline).**
 `src/resume_parser/learn/pub_reader.py` reads title, venue, year and type from a stage 5

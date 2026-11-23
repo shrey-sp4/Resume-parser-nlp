@@ -117,11 +117,9 @@ def test_layout_content_is_invented_and_the_same_for_every_layout():
 # hand-placed breaks), so the wrapped-line rule is checked on breaks it was not written against.
 # A stage that fails today is marked xfail with its reason; no rule is added to fit these pages.
 AUTO_KNOWN_FAILURES = {
-    ("auto_two_columns", "S1"): "S1: one wrapped left-column line is read as full width and lands inside the right column",
-    ("auto_two_columns", "S4"): "S4: follows from S1 (the second degree, read as full width, starts a block outside education)",
-    ("auto_two_columns", "S5"): "S5: follows from the S1 reading order (a degree and a paper run together)",
-    ("auto_sidebar", "S1"): "S1: the page is not reordered by columns, so sidebar lines sit between main lines",
-    ("auto_sidebar", "S5"): "S5: the job title Senior Research Engineer is not in config/titles.json",
+    ("auto_two_columns", "S5"): ("S5: two lines break in the middle of a name (an institution and a company name "
+                                 "run on to the next line with no comma, dash or joining word), so the wrapped-line "
+                                 "rule does not join them"),
 }
 _AUTO_RESULTS: dict = {}
 

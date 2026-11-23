@@ -153,6 +153,19 @@ def _band(start_id, top, rows, tag):
     return out
 
 
+def test_a_line_reaching_into_the_gutter_stays_in_its_column():
+    # one left-column line runs 15 pt into the empty band (text up to the column edge); the band is
+    # shrunk to the part no such line crosses, so that line is left column, not full width
+    lines = _band(1, 100, 10, "a")
+    lines[6] = _l(7, "a left line that runs right up to the column edge", 56, 295, lines[6]["bbox"][1])
+    out = column_order(lines, COLS)
+    assert out is not lines
+    sides = {l["text"]: l["column"] for l in out}
+    assert sides["a left line that runs right up to the column edge"] == "left"
+    assert "full" not in sides.values()
+    assert [l["column"] for l in out] == ["left"] * 10 + ["right"] * 10
+
+
 def test_mixed_page_reads_full_width_lines_in_place_and_columns_in_turn():
     name = _l(0, "Talia Vonbrook, a name line written right across the whole page width", 56, 540, 80)
     between = _l(99, "A full-width heading line that runs across both columns of the page", 56, 540, 250)

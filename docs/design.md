@@ -145,7 +145,11 @@ always picks the same method.
   them date-only (so a column of right-aligned dates next to one-column text is not a second
   column); a narrow side (under 35% of the text width) needs fewer than a quarter date-only
   lines, as a narrow strip of dates and places beside entries is not a sidebar. Table cells do
-  not count. Then:
+  not count. A band found this way is first shrunk to its core, the widest part (still at least
+  12 pt) that no line crosses except lines spanning the whole band, and the side checks run on
+  that core; so a line that only reaches into the band (text running to the column edge) stays
+  in its column, and a sidebar's widest line still counts for the sidebar. The looser warning
+  test below does not shrink. Then:
   - lines crossing the gutter are full width (a name, a heading across the page); they stay
     in place and cut the page into bands; in a band the left column is read, then the right;
   - a side narrower than 35% of the text width is a sidebar, read after the main text as one

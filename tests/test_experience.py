@@ -69,6 +69,20 @@ def test_title_first_lines():
                              ("Lecturer", "Southgate College of Engineering", "2015 - 2023")]
 
 
+def test_seniority_prefixes_only_before_a_listed_title():
+    assert ex.find_title("Senior Research Engineer, Echoquill Instruments Pvt Ltd, 2014 - 2018")[0] == \
+        "Senior Research Engineer"
+    assert ex.find_title("Lead Engineer, Toy Labs, 2015 - 2016")[0] == "Lead Engineer"
+    # a prefix alone is never a title, so it creates no job anchor
+    assert ex.find_title("Senior") is None and ex.find_title("Senior, Toy Lab, 2014 - 2018") is None
+    data = _split(["Senior, Toy Lab, 2014 - 2018", "Lecturer, Southgate College of Engineering, 2015 - 2023"])
+    # that line still starts an entry through its dates, but Senior is not read as its title
+    assert [e["job_title"] for e in data["entries"]] == ["", "Lecturer"]
+    # Investigator is not a listed title: the prefix does not make "Principal Investigator" one
+    # (the line still reads the listed title Principal, as it did before the prefixes were added)
+    assert ex.find_title("Principal Investigator, Toy grant, 2019 - 2021")[0] == "Principal"
+
+
 def test_title_first_over_two_lines():
     data = _split(["Assistant Professor", "Hillcrest University, Fakeville, 2019 - 2023",
                    "Lecturer", "Southgate College of Engineering, 2015 - 2019"])

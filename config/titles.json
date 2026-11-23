@@ -1,5 +1,5 @@
 {
-  "_comment": "Job titles used to find experience entries and their job_title (longest match wins, kept as printed, any case, whole words; it must start a line or a segment after a comma, dash, colon, bar or bracket). Groups are for reading only; prefixes (Visiting, Adjunct, Guest, Ad-hoc, ...) may come before any title and are kept as printed; experience_type comes from the institution. header_words: column-header words of experience tables. continuation_words: a line starting with one of these belongs to the previous entry. No personal data.",
+  "_comment": "Job titles used to find experience entries and their job_title (longest match wins, kept as printed, any case, whole words; it must start a line or a segment after a comma, dash, colon, bar or bracket). Groups are for reading only; prefixes (Visiting, Adjunct, Guest, Ad-hoc, and the seniority words Senior, Junior, Principal, Lead, Chief, Staff) may come before any title and are kept as printed; a prefix alone is never a title; experience_type comes from the institution. header_words: column-header words of experience tables. continuation_words: a line starting with one of these belongs to the previous entry. No personal data.",
   "prefixes": [
     "Visiting",
     "Adjunct",
@@ -19,7 +19,13 @@
     "Officiating",
     "Acting",
     "Tenured",
-    "Tenure-track"
+    "Tenure-track",
+    "Senior",
+    "Junior",
+    "Principal",
+    "Lead",
+    "Chief",
+    "Staff"
   ],
   "academic": [
     "Professor",

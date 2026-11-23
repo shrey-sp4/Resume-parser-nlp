@@ -20,8 +20,9 @@ split into segments where the gap between two words is at least segment_gap_rati
 row's median font size, so a justified paragraph stays whole but separate blocks on one row
 do not merge.
 
-Lines are read top to bottom. A page with a clear vertical gutter (two columns, or a sidebar)
-is read column by column instead (column_order); such lines also carry
+Lines are read top to bottom. A page with a clear vertical gutter (two columns, or a sidebar;
+the empty band shrunk to the part crossed only by full-width lines) is read column by column
+instead (column_order); such lines also carry
     column         "full", "left" or "right"
     column_start   True on the first line of each column run
 A page without a clear gutter keeps its lines exactly as they are, with no column fields.
@@ -185,9 +186,27 @@ def _date_only(text: str) -> bool:
     return bool(d) and len(re.sub(r"[\W_]", "", text.replace(d[0], ""))) <= 2
 
 
+def _core(free: list[dict], a: float, b: float, gutter_min: float) -> tuple[float, float] | None:
+    """The widest part of the band a..b that no line crosses except lines spanning the whole
+    band (full-width lines), if it is at least gutter_min wide. A line that only reaches into
+    the band (text running to the column edge) then stays on its own side."""
+    spanning = [l for l in free if l["bbox"][0] < a and l["bbox"][2] > b]
+    partial = [l for l in free if l not in spanning]
+    run: list[int] = []
+    best = None
+    for x in list(range(int(a), int(b) + 1)) + [None]:
+        if x is not None and not any(l["bbox"][0] < x < l["bbox"][2] for l in partial):
+            run.append(x)
+            continue
+        if len(run) >= gutter_min and (best is None or run[-1] - run[0] > best[1] - best[0]):
+            best = (float(run[0]), float(run[-1]))
+        run = []
+    return best
+
+
 def find_gutter(lines: list[dict], gutter_min: float, cross_max: float, min_lines: int, side_cover_min: float,
                 min_width: float = 0.0, date_only_max: float = 1.01, narrow_width: float = 0.0,
-                narrow_date_only_max: float = 1.01) -> tuple[float, float] | None:
+                narrow_date_only_max: float = 1.01, core: bool = False) -> tuple[float, float] | None:
     """(left edge, right edge) of the widest qualifying empty vertical band, or None.
 
     Only non-table lines count. At every x of the band the lines crossing it cover at most
@@ -198,7 +217,8 @@ def find_gutter(lines: list[dict], gutter_min: float, cross_max: float, min_line
     to one-column text is not a second column). A narrow side (spanning less than narrow_width of
     the text width, a sidebar candidate) must have fewer than narrow_date_only_max date-only
     lines: a narrow strip of dates beside entries is not a sidebar. Ties go to the band further
-    left."""
+    left. With core, each band is first shrunk to its core (_core: the part crossed only by lines
+    spanning the whole band), and the side checks run on that core."""
     free = [l for l in lines if not l.get("in_table") and str(l.get("text", "")).strip()]
     if len(free) < 2 * min_lines:
         return None
@@ -215,6 +235,12 @@ def find_gutter(lines: list[dict], gutter_min: float, cross_max: float, min_line
                 continue
         if len(run) >= gutter_min:
             a, b = float(run[0]), float(run[-1])
+            if core:
+                shrunk = _core(free, a, b, gutter_min)
+                if shrunk is None:
+                    run = []
+                    continue
+                a, b = shrunk
             ok = True
             for side in ([l for l in free if l["bbox"][2] <= a + 1], [l for l in free if l["bbox"][0] >= b - 1]):
                 if len(side) < min_lines:
@@ -234,7 +260,7 @@ def find_gutter(lines: list[dict], gutter_min: float, cross_max: float, min_line
 def _gutter(lines: list[dict], params: dict) -> tuple[float, float] | None:
     return find_gutter(lines, params["column_gutter_min_pt"], params["column_cross_max"], params["column_min_lines"],
                        params["column_side_cover_min"], params["column_min_width"], params["column_date_only_max"],
-                       params["sidebar_max_width"], params["column_narrow_date_only_max"])
+                       params["sidebar_max_width"], params["column_narrow_date_only_max"], core=True)
 
 
 def possible_columns(lines: list[dict], params: dict) -> bool:

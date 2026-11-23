@@ -301,8 +301,10 @@ Check: 0.5 for a valid name (2 to 5 words, letters only) + 0.5 for an email or p
 
 **Education** (built). All education sections are read in order; a section boundary ends an
 entry. Methods: `anchor_split` (an entry starts at a degree word, a school-level word or a year
-range at the start of a row; in institution-first sections at institution lines; not used
-when most lines are table cells), `table_row_split` (one table row is one entry; a header row of
+range at the start of a row; in institution-first sections at institution lines; in a year-last
+section, where the first content line is a degree line, the last is date-only and at least half
+of the date-only lines follow a line that is neither a degree nor date-only, a date-only line
+closes the entry above it instead; not used when most lines are table cells), `table_row_split` (one table row is one entry; a header row of
 column words such as degree, board, year is dropped and tells which column is which),
 `paragraph_split` (vertical gaps), `whole_section_one_entry` (always WARN). Short bold or
 capitalised lines without a degree, year or institution are sub-headings and skipped;

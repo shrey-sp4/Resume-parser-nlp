@@ -15,8 +15,12 @@ Split methods, in order (the first whose check reaches the accept threshold wins
                           a year range at the start of its row. If the section starts with an
                           institution line before any degree (institution-first style), entries
                           start at institution lines instead. Lines on the same row as the
-                          entry's first line never start a new entry. Not used when most lines are
-                          table cells (table_row_split reads those).
+                          entry's first line never start a new entry. In a year-last section
+                          (year_last: it starts with a degree line, ends with a date-only line,
+                          and at least half of its date-only lines follow an institution-type
+                          line) a date-only line closes the entry above it instead of starting
+                          one. Not used when most lines are table cells (table_row_split reads
+                          those).
   table_row_split         one table row (row_id) is one entry; a row of column-header words with
                           no year is a header and is dropped; a header row also tells which
                           column holds the degree, stream, institution, year and grade. Lines
@@ -61,6 +65,30 @@ from resume_parser.headings import DATE_RANGE
 from resume_parser.schema import Method, MethodOutput, load_config
 
 _YEAR_START = re.compile(rf"^\s*(?:\(?\s*){DATE_RANGE.pattern}", re.IGNORECASE)
+_ONE_YEAR = re.compile(r"^\s*\(?(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s*)?(?:19|20)\d{2}\b",
+                       re.IGNORECASE)
+
+
+def date_only(text: str) -> bool:
+    """The line is a date range or a single year (month names allowed) and nothing else but at
+    most two letters or digits."""
+    t = text.strip()
+    m = _YEAR_START.match(t) or _ONE_YEAR.match(t)
+    return bool(m) and len(re.sub(r"[\W_]", "", t[m.end():])) <= 2
+
+
+def year_last(lines: list[dict], kinds: list[str]) -> bool:
+    """Degree-first entries with the year on its own last line: the first content line (not a
+    sub-heading or continuation) is a degree line, the last content line is date-only, and at
+    least half of the date-only lines follow a content line that is neither a degree line nor
+    date-only (an institution line). Then a date-only line closes its entry."""
+    content = [i for i, k in enumerate(kinds) if k not in ("subheading", "continuation")]
+    if not content or kinds[content[0]] != "degree" or not date_only(lines[content[-1]]["text"]):
+        return False
+    dated = [n for n, i in enumerate(content) if date_only(lines[i]["text"])]
+    after_plain = sum(1 for n in dated if n > 0 and kinds[content[n - 1]] != "degree"
+                      and not date_only(lines[content[n - 1]]["text"]))
+    return after_plain * 2 >= len(dated)
 _YEAR_ONLY_START = re.compile(r"^\s*\(?(?:19|20)\d{2}\b")
 _THESIS = re.compile(r"\b(?:thesis|dissertation|supervisor|advisor|adviser|under the guidance)\b", re.IGNORECASE)
 # teaching, course or supervision lists ("Courses taught: M.Sc. Physics", "Ph.D. students supervised")
@@ -225,6 +253,7 @@ def anchor_split(payload) -> MethodOutput:
     content = [i for i, k in enumerate(kinds) if k not in ("subheading", "continuation")]
     first_degree = next((i for i in content if kinds[i] in ("degree", "school")), None)
     institution_first = bool(content) and content[0] != first_degree and has_institution(lines[content[0]]["text"])
+    closes = year_last(lines, kinds)  # a date-only line ends the entry above it, not starts one
     for i, (line, kind) in enumerate(zip(lines, kinds)):
         if kind in ("subheading", "continuation"):
             continue
@@ -233,7 +262,7 @@ def anchor_split(payload) -> MethodOutput:
             anchor = has_institution(text) and kind != "degree" or kind == "school"
         else:
             anchor = kind in ("degree", "school")
-        if line.get("segment_index", 0) == 0 and _YEAR_START.match(text):
+        if line.get("segment_index", 0) == 0 and _YEAR_START.match(text) and not (closes and date_only(text)):
             anchor = True
         if anchor:
             starts.add(i)

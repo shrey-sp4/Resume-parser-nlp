@@ -358,3 +358,47 @@ def test_name_at_the_start_of_a_longer_line_is_a_fallback(tmp_path):
     lines = [("contact", "Westbrook University Physics Department 2019"), ("heading", "EDUCATION"),
              ("body", "Ph.D. in Physics, Westbrook University, 2019")]
     assert _name(tmp_path, lines, "mira_testwood_cv.pdf")[1] == "from_file_name"
+
+
+# ---------------------------------------------------------------- year on its own last line
+
+
+def _edu_lines(texts):
+    lines = [{"id": f"p001_l{i:04d}", "page": 1, "text": t, "bbox": [56, 100 + 14 * i, 400, 110 + 14 * i],
+              "font_size": 10, "bold": 0.0, "in_table": False, "row_id": f"r{i}", "segment_index": 0}
+             for i, t in enumerate(texts)]
+    lines[0]["section_start"] = True
+    return {"lines": lines, "kinds": edu.mark(lines), "params": load_thresholds()["stage5_entities"]}
+
+
+def _degrees(payload):
+    return [(e["degree"], e["institution"]) for e in edu.anchor_split(payload).data["entries"]]
+
+
+def test_year_last_entries_split_with_every_year_form():
+    for first, second in (("2021", "2017"), ("2019 - 2021", "2015 - 2017"), ("Jan 2019 - Jun 2021", "Jan 2015 - Jun 2017"),
+                          ("2021 - Present", "2015 - 2017")):
+        payload = _edu_lines(["M.Sc. in Applied Optics", "Calder Valley College", first,
+                              "B.Sc. in Toy Physics", "Westmere University", second])
+        assert edu.year_last(payload["lines"], payload["kinds"]), first
+        # two entries, the final year line does not make an empty third one
+        assert _degrees(payload) == [("M.Sc.", "Calder Valley College"), ("B.Sc.", "Westmere University")], first
+        assert all(e["degree"] for e in edu.anchor_split(payload).data["entries"])
+
+
+def test_year_first_and_one_line_entries_are_unchanged():
+    year_first = _edu_lines(["2019 - 2021", "M.Sc. in Applied Optics", "Calder Valley College",
+                             "2015 - 2017", "B.Sc. in Toy Physics", "Westmere University"])
+    assert not edu.year_last(year_first["lines"], year_first["kinds"])
+    assert _degrees(year_first) == [("M.Sc.", "Calder Valley College"), ("B.Sc.", "Westmere University")]
+    one_line = _edu_lines(["M.Sc. in Applied Optics, Calder Valley College, 2019 - 2021",
+                           "B.Sc. in Toy Physics, Westmere University, 2015 - 2017"])
+    assert not edu.year_last(one_line["lines"], one_line["kinds"])
+    assert _degrees(one_line) == [("M.Sc.", "Calder Valley College"), ("B.Sc.", "Westmere University")]
+
+
+def test_a_section_outside_the_year_last_shape_is_unchanged():
+    # date-only lines right after degree lines (no institution line before them): not the shape
+    payload = _edu_lines(["M.Sc. in Applied Optics", "2019 - 2021", "B.Sc. in Toy Physics", "2015 - 2017"])
+    assert not edu.year_last(payload["lines"], payload["kinds"])
+    assert edu.date_only("Jan 2019 - Jun 2021") and edu.date_only("2021") and not edu.date_only("2021 Westmere University")

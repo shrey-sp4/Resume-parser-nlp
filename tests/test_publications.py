@@ -286,6 +286,30 @@ def test_venue_without_a_venue_word():
     assert pb.find_venue(", 12, pp. 1-9, 2019.") == ("", False)
 
 
+def test_venue_with_volume_or_pages_and_no_comma():
+    # volume or pages written straight after the venue are cut and the venue is kept
+    assert pb.find_venue(". Journal of Invented Biology Vol. 12, 2020.")[0] == "Journal of Invented Biology"
+    assert pb.find_venue(". Journal of Invented Biology 12(3) 45-67, 2020.")[0] == "Journal of Invented Biology"
+    assert pb.find_venue(". Journal of Invented Biology pp. 45-67, 2020.")[0] == "Journal of Invented Biology"
+    data = _run(["1. M. Testwood, R. Doe. Modelling gene networks with sparse graphs. "
+                 "Journal of Invented Biology Vol. 12, pp. 1-9, 2019.",
+                 "2. M. Testwood, R. Doe. Thin films that do not exist. Journal of Toy Physics 4(2) 11-19, 2020.",
+                 "3. M. Testwood, R. Doe. Toy chemistry revisited. Journal of Placeholder Notes, Vol. 3, 2021."],
+                pb.marker_split)
+    assert [e["venue"] for e in data["entries"]] == ["Journal of Invented Biology", "Journal of Toy Physics",
+                                                      "Journal of Placeholder Notes"]
+    assert [e["type"] for e in data["entries"]] == ["journal"] * 3
+    # the usual comma form is unchanged
+    assert pb.find_venue(". Journal of Invented Biology, Vol. 12, pp. 1-9, 2020.")[0] == "Journal of Invented Biology"
+
+
+def test_numbers_after_a_segment_without_a_venue_word_change_nothing():
+    # no journal, conference or publisher word: the segment stays volume-like and is not a venue
+    assert pb.find_venue(". Placeholder Toy Notes Vol. 12, 2020.") == ("", False)
+    # a title-like phrase with a trailing volume is not turned into a venue
+    assert pb.find_venue(". Growth of thin toy films on glass Vol. 4, pp. 1-9, 2019.") == ("", False)
+
+
 # ---------------------------------------------------------------- S5 loss fixes
 
 

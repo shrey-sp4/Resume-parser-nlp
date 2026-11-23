@@ -43,8 +43,11 @@ before its dot ("A . B .") is read as "A. B." first.
   venue  the first comma segment after the title that holds a journal, conference or publisher
          word, else the first segment that is not volume, pages, year or DOI (at most 15 words);
          when that gives nothing, the segment right after the title if it has at most 8 words and
-         is not volume, pages, year, DOI or an author list; otherwise empty. A leading "In" or
-         "In:" is removed; volume and page numbers at its end are cut
+         is not volume, pages, year, DOI or an author list; otherwise empty. A segment that holds
+         a journal, conference or publisher word and ends in volume or pages with no comma before
+         them ("Journal of X Vol. 12", "Journal of X 12(3) 45-67") counts once those numbers are
+         cut, when what is left still holds the word and is not volume, pages or a year. A leading
+         "In" or "In:" is removed; volume and page numbers at its end are cut
   year   the last plausible 4-digit year (1950 to current_year + year_max_offset) outside DOIs
          and links, as a string
   type   the sub-heading, then a journal or a conference word in the entry's own venue (Journal,
@@ -377,7 +380,15 @@ def find_venue(rest: str) -> tuple[str, bool]:
         return bool(re.search(r"[A-Za-z]{2}", s)) and not _VOL_PAGES.search(s) and \
             not _YEAR.fullmatch(s.strip("() ")) and not _DOI.search(s) and not _URL.search(s)
 
-    segs = [s for s in raw if usable(s)]
+    def venue_with_numbers(s):
+        """A venue with its volume or pages written after it without a comma, numbers cut."""
+        if not _venue_word(s):
+            return None
+        cut = _TRAIL_NUMBERS.sub("", s).strip(" .,;:(")
+        return cut if cut != s and usable(cut) and _venue_word(cut) else None
+
+    segs = [s if usable(s) else venue_with_numbers(s) for s in raw]
+    segs = [s for s in segs if s]
     pick = next((s for s in segs if _venue_word(s)), segs[0] if segs else "")
     pick = _TRAIL_NUMBERS.sub("", pick).strip(" .,;:(")
     if 2 <= len(pick) and len(pick.split()) <= 15:

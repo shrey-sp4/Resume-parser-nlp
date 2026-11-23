@@ -159,6 +159,15 @@ def load_stages(stem: str) -> dict:
     """The saved stage files of one resume: stage records, page texts and section texts."""
     folder = common.stages_dir() / resume_id_for(stem)
     rec = {s: read_json(folder / n) if (folder / n).is_file() else None for s, n in STAGE_FILES.items()}
+    methods_rec = read_json(folder / METHODS_FILE) if (folder / METHODS_FILE).is_file() else {}
+    meta = common.outputs_dir() / f"{stem}.meta.json"
+    provenance = read_json(meta).get("provenance") or {} if meta.is_file() else {}
+    return stages_from(rec, methods_rec, provenance)
+
+
+def stages_from(rec: dict, methods_rec: dict, provenance: dict) -> dict:
+    """The funnel's view of one resume from its stage records (as saved in the stage files),
+    the stage 1 methods record and the sidecar provenance; reads nothing from disk."""
     pages: dict[str, str] = {}
     table_words: set[str] = set()
     data1 = (rec["stage1"] or {}).get("data") or {}
@@ -167,7 +176,6 @@ def load_stages(stem: str) -> dict:
         pages[page_id] = _line_text(lines)
         table_words |= set(snorm(_line_text([x for x in lines if x.get("in_table")])).split())
     by_method: dict[str, list[str]] = defaultdict(list)
-    methods_rec = read_json(folder / METHODS_FILE) if (folder / METHODS_FILE).is_file() else {}
     for page_id in sorted(methods_rec.get("methods") or {}):
         for method, data in sorted((methods_rec["methods"][page_id] or {}).items()):
             by_method[method].append(_line_text((data or {}).get("lines")))
@@ -183,8 +191,6 @@ def load_stages(stem: str) -> dict:
     content_lines = {str(line.get("id")) for sec in data4.get("sections") or []
                      if (per_unit4.get(str(sec.get("block_id"))) or {}).get("method_used") == "content_guess"
                      for line in sec.get("lines") or []}
-    meta = common.outputs_dir() / f"{stem}.meta.json"
-    provenance = read_json(meta).get("provenance") or {} if meta.is_file() else {}
     return {
         "records": rec,
         "complete": rec["stage1"] is not None and rec["stage4"] is not None,
@@ -519,8 +525,13 @@ def load_checks(stem: str) -> set[tuple[str, str]] | None:
     path = common.outputs_dir() / f"{stem}.meta.json"
     if not path.is_file():
         return None
+    return checks_from(read_json(path))
+
+
+def checks_from(sidecar: dict) -> set[tuple[str, str]]:
+    """(stage, check) pairs that fired, from one sidecar record."""
     fired = set()
-    for stage, report in read_json(path)["stage_report"].items():
+    for stage, report in sidecar["stage_report"].items():
         if report["status"] != "OK":
             fired.add((stage, f"status {report['status']}"))
         for reason in report["reasons"]:
@@ -553,8 +564,10 @@ def check_validity(per_resume: list[tuple[set, set]]) -> dict[tuple[str, str], d
     return rows
 
 
-def print_check_validity(results: dict) -> None:
-    groups = [g for g in common.DEV_GROUPS if g in results]
+def print_check_validity(results: dict, groups: list[str] | None = None) -> None:
+    """The check-validity table; by default for the development groups in results."""
+    if groups is None:
+        groups = [g for g in common.DEV_GROUPS if g in results]
     tables = {g: check_validity(results[g]["checks"]) for g in groups}
     keys = sorted({k for t in tables.values() for k in t})
     print(f"  {'stage':<8}{'check':<40}" + "".join(f"{g + ' fired/+loss/missed':>28}" for g in groups))
@@ -746,6 +759,13 @@ def run(a: argparse.Namespace) -> int:
     if a.lost_items:
         print_lost_items(results, ids, a.stage)
         return 0
+    print_report(results, warning)
+    return 0
+
+
+def print_report(results: dict, warning: str = "", validity_groups: list[str] | None = None) -> None:
+    """Every aggregate table of the funnel for the groups in results (rankings and per-method
+    lists only when a development group is there)."""
     if warning:
         print(f"WARNING: {warning}\n")
     print("=== FUNNEL: where GT items are lost (first failing stage) ===")
@@ -786,9 +806,9 @@ def run(a: argparse.Namespace) -> int:
         print(f"  {sec:<14}{method:<40}" + "".join(f"{cnt[g]:>12}" for g in results))
     print("\n=== FALSE-POSITIVE CAUSES (unmatched predictions) ===")
     print_fps(results)
-    print("\n=== CHECK VALIDITY (development groups): does a check fire where a real loss is? ===")
-    print_check_validity(results)
-    return 0
+    label = "development groups" if validity_groups is None else ", ".join(validity_groups)
+    print(f"\n=== CHECK VALIDITY ({label}): does a check fire where a real loss is? ===")
+    print_check_validity(results, validity_groups)
 
 
 def main(argv: list[str] | None = None) -> int:

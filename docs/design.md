@@ -729,6 +729,42 @@ learned model) is ever chosen, changed or tuned on it, and it is never read duri
 - `scripts/check_no_data.py` refuses any repo file holding a final-set stem or resume ID when
   `RESUME_FINAL_GT` or `RESUME_FINAL_PDFS` is set.
 
+**The fresh set (once, ever; `eval/fresh.py`).** A second held-out set of fresh resumes with the
+final set's protections and a stricter guard. Nothing is ever chosen, changed or tuned on it.
+- Four folders outside the repo and outside `RESUME_DATA_DIR`, named by environment variables:
+  `RESUME_FRESH_PDFS` (only `.pdf` files directly inside), `RESUME_FRESH_GT` (only `.json` files
+  directly inside, GT v2; it may sit inside the PDF folder), `RESUME_FRESH_BACKUP` (must exist,
+  never read) and `RESUME_FRESH_OUT` (`fresh_runs.log`, `fresh_report.txt`, `fresh_report.json`
+  and nothing else). The backup and output folders may not overlap any other fresh folder, and no
+  fresh folder may overlap a final-set folder.
+- `python eval/fresh.py check`: layout only, the pipeline is not run. Folder rules; PDF and GT
+  counts; each GT file is paired with the PDF its `resume_file` names (counts of PDFs with no GT,
+  PDFs named by several GT files, GT files with no PDF); `resume_file` values not ending in `.pdf`
+  (pattern only); GT files failing the GT v2 schema; repo files naming a fresh stem or resume ID;
+  PDFs byte-identical to one in `RESUME_DATA_DIR/pdfs` or the final set; runs logged. PASS or
+  FAIL and counts only, never a value, stem, ID or path, also on failure.
+- `python eval/fresh.py run --commit <hash> [--parser-commit <hash>]`: refused unless HEAD is
+  the commit named, the tree is clean (untracked files included), `src/`, `config/` and
+  `schema/` are unchanged since `--parser-commit` (when given), the layout check passes and no
+  run is logged in `RESUME_FRESH_OUT/fresh_runs.log` or its mirror
+  `RESUME_DATA_DIR/reports/fresh_runs.log`. The log line (commit, tree state, parser commit,
+  hashes of the package, scripts and thresholds) is written to both before any work, so a
+  crashed run counts. There is no override: the set runs once, ever. Git is only read.
+- The run is in memory: no main JSON, sidecar, stage file, index or per-item file is written.
+  Predictions and stage records are built exactly as the writer would write them (schema checked,
+  JSON round trip) and scored with `evaluate.py` and `funnel.py` (a test checks equality with the
+  on-disk final path). Report: P/R/F1 with 95% CIs, field accuracies, name exact and normalised,
+  the funnel tables, decision counts, the wrong items (lost GT items, false-positive entries)
+  that fall in flagged resumes (NEEDS_REVIEW or FAIL), and the aggregate check-validity table.
+  Output of the parser is swallowed during the run; an exception is reported as its class name
+  and a count, never its message or a traceback.
+- `python eval/fresh.py rehearse [--seeds 1000-1009]`: dress rehearsal of check and run on
+  synthetic sweep CVs with their generator GT, with temporary folders for the four fresh folders
+  and for `RESUME_DATA_DIR`; the git checks are shown, not enforced; the temporary folder is
+  removed afterwards.
+- `scripts/check_no_data.py` also refuses fresh-set stems and resume IDs when `RESUME_FRESH_GT`
+  or `RESUME_FRESH_PDFS` is set.
+
 ## 7. Choosing thresholds
 
 In real use there is no ground truth, so decisions must come from label-free checks. To choose
@@ -803,6 +839,7 @@ resume-parser/
      field_norm.py  validate.py  scoring.py  writer.py   (writer.py writes main JSON + sidecar + index + review queue)
      learn/    pub_reader.py                    (experimental learned publication fields; not used by any stage)
   eval/     common.py  evaluate.py  funnel.py  calibrate_thresholds.py  end_to_end.py  pub_reader_loo.py  folds.py   (common.py: groups, IDs, validation and test_frozen guards)
+            fresh.py   (the fresh set: layout check, the one run, dress rehearsal)
   fixtures/ synthetic/   (fake resumes, built by a script)
   tests/    one test file per stage, plus determinism
   scripts/  check_no_data.py  make_synthetic_resumes.py
@@ -815,7 +852,8 @@ resume-parser/
   `pdfs/`, `ground_truth_v2/` (with `_split.json`), `outputs/`, `review_queue/`, `reports/`
   (with `stages/`, `funnel/`, `test_frozen_runs.log` and `validation_runs.log`), `private/`
   (salt and ID map), `models/` (learned readers, if saved).
-- The final set has its own three folders outside `RESUME_DATA_DIR` (section 6).
+- The final set has its own three folders outside `RESUME_DATA_DIR` (section 6), and the fresh
+  set its own four (section 6); only the fresh run log is mirrored to `reports/fresh_runs.log`.
 - Back it up somewhere private. Git will not have a copy.
 - Guards: `.gitignore`, a pre-commit hook and a CI check (`scripts/check_no_data.py`) that
   refuse PDFs, JSON outside `config/`, `schema/`, `fixtures/` and `docs/`, any file larger than

@@ -10,6 +10,7 @@ Checks every tracked and staged file:
   never shows the value found
 - when RESUME_FINAL_GT or RESUME_FINAL_PDFS is set: the same for the final set (the stems of the
   .json and .pdf files directly inside those folders, and their resume IDs)
+- when RESUME_FRESH_GT or RESUME_FRESH_PDFS is set: the same for the fresh set (eval/fresh.py)
 
 Usage:
     python scripts/check_no_data.py            tracked + staged files
@@ -59,8 +60,17 @@ def _add_marker(markers: set[str], entry: str) -> None:
 def final_markers() -> set[str]:
     """Stems and resume IDs of the final set: the .json files directly inside RESUME_FINAL_GT
     and the .pdf files directly inside RESUME_FINAL_PDFS (empty when neither is set)."""
+    return _folder_markers((("RESUME_FINAL_GT", ".json"), ("RESUME_FINAL_PDFS", ".pdf")))
+
+
+def fresh_markers() -> set[str]:
+    """The same for the fresh set (eval/fresh.py): RESUME_FRESH_GT and RESUME_FRESH_PDFS."""
+    return _folder_markers((("RESUME_FRESH_GT", ".json"), ("RESUME_FRESH_PDFS", ".pdf")))
+
+
+def _folder_markers(folders) -> set[str]:
     markers: set[str] = set()
-    for env, suffix in (("RESUME_FINAL_GT", ".json"), ("RESUME_FINAL_PDFS", ".pdf")):
+    for env, suffix in folders:
         folder = os.environ.get(env, "").strip()
         if folder and Path(folder).is_dir():
             for path in Path(folder).iterdir():
@@ -71,8 +81,8 @@ def final_markers() -> set[str]:
 
 def guarded_markers() -> set[str]:
     """Resume IDs and file stems of the guarded groups, from RESUME_DATA_DIR, and of the final
-    set (empty without them)."""
-    markers = final_markers()
+    and fresh sets (empty without them)."""
+    markers = final_markers() | fresh_markers()
     folder = os.environ.get("RESUME_DATA_DIR", "")
     split = Path(folder) / "ground_truth_v2" / "_split.json" if folder else None
     if split is None or not split.is_file():

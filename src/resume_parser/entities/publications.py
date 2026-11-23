@@ -39,7 +39,10 @@ before its dot ("A . B .") is read as "A. B." first.
          initials separated by commas, "and" or "&", ending at a full stop or colon, or at the
          last initial before a sentence-case or Title-Case title of 3 or more words; or the
          authors followed by "(year)."), up to the end of that sentence; for comma-only citations
-         the first comma segment after the author segments that has 3 or more words
+         the first comma segment after the author segments that has 3 or more words; when none of
+         these gives a title and the segment after comma-separated authors reads "Title. Venue"
+         (a full stop, then a journal, conference or publisher word), the part before that full
+         stop, if it has 3 or more words and no venue word
   venue  the first comma segment after the title that holds a journal, conference or publisher
          word, else the first segment that is not volume, pages, year or DOI (at most 15 words);
          when that gives nothing, the segment right after the title if it has at most 8 words and
@@ -95,6 +98,7 @@ _TITLE_WORD = r"(?!(?:and|&)\s)(?![A-Z]\.?(?=[\s,]|$))[^\s,;]+"
 _CUT = re.compile(r"(?:(?<=[A-Za-zÀ-ɏ'’\-)]{2})\.|:|\bet\s+al\.)\s+|(?<=\b[A-Z])\.\s+(?=[A-Z][a-z]+\s+[a-z])"
                   rf"|(?<=\b[A-Z])\.\s+(?=[A-Z][a-zà-ɏ'’\-]+\s+{_TITLE_WORD}\s+{_TITLE_WORD}(?:\s|$))")
 _SENTENCE_END = re.compile(r"(?<=[a-zà-ɏ0-9)\]]{2})\.(?=\s+\S)|[?!](?=\s+\S)")
+_TITLE_STOP = re.compile(r"(?<=[a-z0-9)\]]{2})\.\s+(?=[A-Z])")  # a full stop that ends a title sentence
 _INITIALS = re.compile(r"^[A-Z]\.?(?:\s?-?[A-Z]\.?){0,3}$")
 _AUTHOR_START = re.compile(r"^(?:(?:[A-Z]\.\s?-?){1,3}\s*[A-Z][a-zà-ɏ'’\-]+|[A-Z][a-zà-ɏ'’\-]+,?\s+(?:[A-Z]\.\s?){1,3}"
                            r"|[A-Z][a-zà-ɏ'’\-]+(?:,|\s+and\b|\s*&|\.\s))")
@@ -303,6 +307,15 @@ def find_title(text: str) -> tuple[str, int, int, str]:
     if len(segs) >= 3 and _title_like(segs[0][1]) and n:
         start, seg = segs[0]
         return seg.strip(" ,.;:"), start, start + len(seg), ", ".join(s.strip() for _p, s in segs[1:1 + n])
+    # comma-separated authors, then "Title. Venue ..." in one comma segment: the title ends at the
+    # first full stop of that segment when a journal, conference or publisher word follows it
+    if run and run < len(segs):
+        start, seg = segs[run]
+        stop = _TITLE_STOP.search(seg)
+        if stop and _venue_word(seg[stop.end():]):
+            t = seg[: stop.start()].strip(" ,.;:")
+            if len(t.split()) >= 3 and not _venue_word(t) and not _VOL_PAGES.search(t):
+                return t, start, start + stop.start(), text[: segs[run - 1][0] + len(segs[run - 1][1])].strip(" ,.;:")
     return "", 0, 0, ""
 
 

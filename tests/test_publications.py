@@ -303,6 +303,24 @@ def test_venue_with_volume_or_pages_and_no_comma():
     assert pb.find_venue(". Journal of Invented Biology, Vol. 12, pp. 1-9, 2020.")[0] == "Journal of Invented Biology"
 
 
+def test_title_then_venue_after_comma_separated_authors():
+    t, _s, end, authors = pb.find_title("M. Testwood, R. Doe, Modelling gene networks with sparse graphs. "
+                                        "Journal of Invented Biology Vol. 12, pp. 1-9, 2019.")
+    assert t == "Modelling gene networks with sparse graphs" and authors == "M. Testwood, R. Doe"
+    entry = pb.parse_entry([_line(0, "1. M. Testwood, R. Doe, Modelling gene networks with sparse graphs. "
+                                     "Journal of Invented Biology, 12, 2019.")], PARAMS)["entry"]
+    assert (entry["title"], entry["venue"]) == ("Modelling gene networks with sparse graphs", "Journal of Invented Biology")
+    # the usual "Authors. Title. Venue" form and entries whose title is already found are unchanged
+    assert pb.find_title("M. Testwood, R. Doe. Modelling gene networks with sparse graphs. "
+                         "Journal of Invented Biology, 12, 2019.")[0] == "Modelling gene networks with sparse graphs"
+    assert pb.find_title("M. Testwood, R. Doe, Modelling gene networks with sparse graphs, "
+                         "Journal of Invented Biology, 12, 2019.")[0] == "Modelling gene networks with sparse graphs"
+    # no venue word after the full stop: the segment is not split (the old comma-only reading)
+    assert pb.find_title("M. Testwood, R. Doe, Modelling gene networks with sparse graphs. "
+                         "Placeholder Toy Notes 12, 2019.")[0] == ("Modelling gene networks with sparse graphs. "
+                                                                    "Placeholder Toy Notes 12")
+
+
 def test_numbers_after_a_segment_without_a_venue_word_change_nothing():
     # no journal, conference or publisher word: the segment stays volume-like and is not a venue
     assert pb.find_venue(". Placeholder Toy Notes Vol. 12, 2020.") == ("", False)

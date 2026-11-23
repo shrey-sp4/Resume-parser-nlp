@@ -3,7 +3,10 @@
 Input: the stage 2 lines. Output: blocks in reading order. The first block (before any
 heading) is the personal block; every other block starts at a heading line, or at the first
 line of a new column (stage 1 column_start) when that line is not a heading: such a block has
-no heading and is mapped by stage 4 from its content.
+no heading and is mapped by stage 4 from its content. A page that follows a page read by columns,
+is not read by columns itself and starts with no heading begins a block that continues the main
+column's last section (the column read first), marked continues=<block id>; stage 4 maps it like
+that block.
 
 Heading signals (thresholds.json, stage3_sections, to calibrate):
 - vocabulary: the whole line, normalised, is an alias in config/section_aliases.json, or
@@ -177,8 +180,29 @@ def split_inline_headings(lines: list[dict]) -> list[dict]:
 def build_blocks(lines: list[dict], headings: dict[int, tuple], p: dict, use_content: bool) -> list[dict]:
     blocks = [{"heading_raw": None, "heading_line": None, "guess": "personal", "label": "personal",
                "guess_source": "position", "lines": []}]
+    # pages that stage 1 read by columns, and the column read first on each (the main column)
+    reordered = {line["page"] for line in lines if line.get("column") in ("left", "right")}
+    main_col: dict[int, str] = {}
+    for line in lines:
+        if line.get("column") in ("left", "right"):
+            main_col.setdefault(line["page"], line["column"])
+    main_block: dict[int, dict] = {}
+    prev_page = None
     for i, line in enumerate(lines):
-        if i in headings:
+        page = line["page"]
+        continued = None
+        if (prev_page is not None and page != prev_page and prev_page in reordered and page not in reordered
+                and i not in headings and not line.get("column_start")):
+            target = main_block.get(prev_page)
+            if target is not None and target is not blocks[-1]:
+                continued = target
+        if continued is not None:
+            # the page after a page read by columns starts with no heading: it continues the
+            # main column's last section, not the column or sidebar read last on that page
+            blocks.append({"heading_raw": None, "heading_line": None, "guess": continued["guess"],
+                           "label": continued["label"], "guess_source": "continued", "continues": continued,
+                           "lines": [line]})
+        elif i in headings:
             guess, label, source = headings[i]
             blocks.append({"heading_raw": line["text"], "heading_line": line, "guess": guess, "label": label,
                            "guess_source": source, "lines": []})
@@ -188,14 +212,20 @@ def build_blocks(lines: list[dict], headings: dict[int, tuple], p: dict, use_con
                            "guess_source": "column", "lines": [line]})
         else:
             blocks[-1]["lines"].append(line)
+        if line.get("column") in ("left", "right") and line.get("column") == main_col.get(page):
+            main_block[page] = blocks[-1]
+        prev_page = page
     if use_content:
         for block in blocks[1:]:
-            if block["guess"] is None:
+            if block["guess"] is None and "continues" not in block:
                 found = content_guess(block["lines"], p["content_min_share"])
                 if found:
                     block.update(guess=found[0], label=found[0], guess_source="content")
     for n, block in enumerate(blocks, start=1):
         block["block_id"] = f"block_{n:03d}"
+    for block in blocks:
+        if "continues" in block:
+            block["continues"] = block["continues"]["block_id"]
     return [{k: b[k] for k in sorted(b)} for b in blocks]
 
 

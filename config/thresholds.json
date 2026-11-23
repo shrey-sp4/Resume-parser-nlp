@@ -115,8 +115,10 @@
     "citation_entry_min_share": 0.6
   },
   "stage5_entities": {
-    "_comment": "Stage 5 settings. To calibrate on dev. current_year is set here (not read from the clock) so runs are reproducible; update it once a year. max_citation_chars: a publication entry longer than this is taken as several citations run together and fails its check; indent_tolerance_pt: how far right of the left margin a wrapped citation line must start for hanging_indent_split. column_wrap_gap_factor: on pages reordered by columns, a continuation line joins the line above only when the gap is at most this many times the normal line gap of that column (entities/wraps.py).",
+    "_comment": "Stage 5 settings. To calibrate on dev. current_year is set here (not read from the clock) so runs are reproducible; update it once a year. max_citation_chars: a publication entry longer than this is taken as several citations run together and fails its check; indent_tolerance_pt: how far right of the left margin a wrapped citation line must start for hanging_indent_split. full_name_author_min_entries, full_name_author_min_share: a single full name leading an entry counts as its author list only when at least that many (or that share) of the section's entries start that way, and no other author rule finds a title. column_wrap_gap_factor: on pages reordered by columns, a continuation line joins the line above only when the gap is at most this many times the normal line gap of that column (entities/wraps.py).",
     "column_wrap_gap_factor": 1.5,
+    "full_name_author_min_entries": 3,
+    "full_name_author_min_share": 0.7,
     "name_top_lines": 8,
     "paragraph_gap_ratio": 1.0,
     "current_year": 2026,

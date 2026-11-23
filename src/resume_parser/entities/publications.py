@@ -42,7 +42,10 @@ before its dot ("A . B .") is read as "A. B." first.
          the first comma segment after the author segments that has 3 or more words; when none of
          these gives a title and the segment after comma-separated authors reads "Title. Venue"
          (a full stop, then a journal, conference or publisher word), the part before that full
-         stop, if it has 3 or more words and no venue word
+         stop, if it has 3 or more words and no venue word; still none: a single author written
+         as a full name ("Firstname Lastname (2022). Title") counts as the author list, only when
+         at least full_name_author_min_entries (or full_name_author_min_share) of the section's
+         entries start that way
   venue  the first comma segment after the title that holds a journal, conference or publisher
          word, else the first segment that is not volume, pages, year or DOI (at most 15 words);
          when that gives nothing, the segment right after the title if it has at most 8 words and
@@ -98,6 +101,9 @@ _TITLE_WORD = r"(?!(?:and|&)\s)(?![A-Z]\.?(?=[\s,]|$))[^\s,;]+"
 _CUT = re.compile(r"(?:(?<=[A-Za-zÀ-ɏ'’\-)]{2})\.|:|\bet\s+al\.)\s+|(?<=\b[A-Z])\.\s+(?=[A-Z][a-z]+\s+[a-z])"
                   rf"|(?<=\b[A-Z])\.\s+(?=[A-Z][a-zà-ɏ'’\-]+\s+{_TITLE_WORD}\s+{_TITLE_WORD}(?:\s|$))")
 _SENTENCE_END = re.compile(r"(?<=[a-zà-ɏ0-9)\]]{2})\.(?=\s+\S)|[?!](?=\s+\S)")
+# a single author written as a full name, then "(year)." or a full stop or comma, then a title
+FULL_NAME_LEAD = re.compile(r"^([A-Z][a-z]+(?:[\s\-][A-Z][a-z]+){1,2})\s*(?:\(\s*(?:19|20)\d{2}[a-z]?\s*\)\s*[.:,]?|[.,])"
+                            r"\s+\S+\s+\S+\s+\S+")
 _TITLE_STOP = re.compile(r"(?<=[a-z0-9)\]]{2})\.\s+(?=[A-Z])")  # a full stop that ends a title sentence
 _INITIALS = re.compile(r"^[A-Z]\.?(?:\s?-?[A-Z]\.?){0,3}$")
 _AUTHOR_START = re.compile(r"^(?:(?:[A-Z]\.\s?-?){1,3}\s*[A-Z][a-zà-ɏ'’\-]+|[A-Z][a-zà-ɏ'’\-]+,?\s+(?:[A-Z]\.\s?){1,3}"
@@ -264,14 +270,28 @@ def _title_end(text: str, start: int) -> int:
     return end
 
 
-def find_title(text: str) -> tuple[str, int, int, str]:
-    """(title, start, end, authors) or ("", 0, 0, "")."""
+def find_title(text: str, full_name_authors: bool = False) -> tuple[str, int, int, str]:
+    """(title, start, end, authors) or ("", 0, 0, "").
+    full_name_authors: the section's entries mostly start with a single full name ("Firstname
+    Lastname (2022). Title ..."); only then, and only when no other rule finds a title, that
+    leading name counts as the author list."""
+    found = _find_title(text, None)
+    if found[0] or not full_name_authors:
+        return found
+    m = FULL_NAME_LEAD.match(text)
+    return _find_title(text, m.group(1)) if m else found
+
+
+def _find_title(text: str, full_name: str | None) -> tuple[str, int, int, str]:
+    def author_like(prefix: str) -> bool:
+        return _author_like(prefix) or (full_name is not None and prefix.strip(" ,;.:*") == full_name)
+
     for m in _QUOTED.finditer(text):
         t = (m.group(1) or m.group(2) or "").strip(" ,.;:")
         if len(t.split()) >= 3:
             return t, m.start(), m.end(), text[: m.start()].strip(" ,.;:")
     apa = _APA_YEAR.search(text)
-    if apa and _author_like(text[: apa.start()]):
+    if apa and author_like(text[: apa.start()]):
         start = apa.end()
         end = _title_end(text, start)
         t = text[start:end].strip(" ,.;:")
@@ -279,7 +299,7 @@ def find_title(text: str) -> tuple[str, int, int, str]:
             return t, start, end, text[: apa.start()].strip(" ,.;:")
     for m in _CUT.finditer(text):
         prefix, rest = text[: m.start()], text[m.end():]
-        if not _author_like(prefix) or _AUTHOR_START.match(rest):
+        if not author_like(prefix) or _AUTHOR_START.match(rest):
             continue
         start = m.end()
         end = _title_end(text, start)
@@ -441,17 +461,30 @@ def publication_type(sub_type, sec_type, venue: str, lead: bool, text: str) -> t
     return ("journal", "default") if venue else ("other", "default")
 
 
-def parse_entry(lines: list[dict], params: dict) -> dict:
-    raw = _join([l["text"] for l in lines])
+def _entry_start(raw: str) -> str:
     text = _MARKER.sub("", raw, count=1).strip()
-    text = re.sub(r"^\d{1,3}\s+(?=[A-Z])", "", text)  # a bare list number ("12 Surname, ...")
+    return re.sub(r"^\d{1,3}\s+(?=[A-Z])", "", text)  # a bare list number ("12 Surname, ...")
+
+
+def full_name_authors(texts: list[str], params: dict) -> bool:
+    """The entries of a section mostly start with a single full name and then a title: at least
+    full_name_author_min_entries of them, or full_name_author_min_share of them."""
+    if not texts:
+        return False
+    hits = sum(bool(FULL_NAME_LEAD.match(_entry_start(t))) for t in texts)
+    return hits >= params["full_name_author_min_entries"] or hits / len(texts) >= params["full_name_author_min_share"]
+
+
+def parse_entry(lines: list[dict], params: dict, full_name_ok: bool = False) -> dict:
+    raw = _join([l["text"] for l in lines])
+    text = _entry_start(raw)
     text = _SPACED_INITIAL.sub(r"\1.", text)  # "Doe, A . B ." as extracted -> "Doe, A. B."
     urls = _URL.findall(text)
     doi = _DOI.search(text)
     clean = _DOI.sub(" ", _URL.sub(" ", text))
     max_year = params["current_year"] + params["year_max_offset"]
     years = [y for y in _YEAR.findall(clean) if 1950 <= int(y) <= max_year]
-    title, _start, end, authors = find_title(clean)
+    title, _start, end, authors = find_title(clean, full_name_ok)
     venue, lead = find_venue(clean[end:]) if title else ("", False)
     sub_type, sec_type = lines[0].get("pub_sub_type"), lines[0].get("pub_sec_type")
     ptype, source = publication_type(sub_type, sec_type, venue, lead, clean)
@@ -483,8 +516,9 @@ def _groups_to_output(groups: list[list[int]], payload: dict, method: str) -> Me
     lines, params = payload["lines"], payload["params"]
     entries, sides, checks = [], [], []
     leftover = 0
+    full_names = full_name_authors([_join([lines[i]["text"] for i in g]) for g in groups], params)
     for g in groups:
-        p = parse_entry([lines[i] for i in g], params)
+        p = parse_entry([lines[i] for i in g], params, full_names)
         e = p["entry"]
         if not (e["title"] or e["venue"]):
             leftover += len(g)  # nothing readable: counted as missed lines

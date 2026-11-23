@@ -408,3 +408,60 @@ def test_wrapped_citations_need_the_share_and_no_other_heading():
     # an entry longer than max_citation_chars is several items run together, never one citation
     long_one = _block("Things I Wrote Over The Years", ["M. Testwood, R. Doe, " + "a very long text " * 60 + "2019."])
     assert content_guess_method((long_one, _params())).data is None
+
+
+# ---------------------------------------------------------------- a page after a page read by columns
+
+
+def _pl(i, text, page, column=None, column_start=False):
+    line = {"id": f"p{page:03d}_l{i:04d}", "page": page, "text": text, "bbox": [56, 100 + 14 * i, 300, 110 + 14 * i],
+            "font_size": 10, "bold": 0.0, "in_table": False}
+    if column:
+        line.update(column=column, column_start=column_start)
+    return line
+
+
+def _sidebar_then_next_page(next_first="Research Engineer, Glimmerworks Labs Pvt Ltd, 2017 - 2020"):
+    lines = [_pl(0, "WORK EXPERIENCE", 1, "left", True), _pl(1, "Lecturer, Duskmoor University, 2020 - 2024", 1, "left"),
+             _pl(2, "SKILLS", 1, "right", True), _pl(3, "Soldering", 1, "right"),
+             _pl(4, next_first, 2), _pl(5, "Postdoctoral Fellow, Coldwater College, 2015 - 2017", 2)]
+    headings = {0: ("experience", "experience", "alias"), 2: ("other", "skills", "alias")}
+    if next_first.isupper():
+        headings[4] = ("publications", "publications", "alias")
+    return lines, headings
+
+
+def test_next_page_continues_the_main_column_not_the_sidebar():
+    from resume_parser.sections import build_blocks
+
+    lines, headings = _sidebar_then_next_page()
+    blocks = build_blocks(lines, headings, load_thresholds()["stage3_sections"], use_content=False)
+    by_id = {b["block_id"]: b for b in blocks}
+    last = blocks[-1]
+    assert last["guess_source"] == "continued" and by_id[last["continues"]]["heading_raw"] == "WORK EXPERIENCE"
+    assert [l["text"] for l in last["lines"]][0].startswith("Research Engineer")
+    # every line is still in reading order, in exactly one block
+    assert [l["id"] for b in blocks for l in b["lines"]] == [l["id"] for l in lines if l["id"] not in ("p001_l0000", "p001_l0002")]
+
+
+def test_a_heading_on_the_next_page_or_a_one_column_document_is_unchanged():
+    from resume_parser.sections import build_blocks
+
+    lines, headings = _sidebar_then_next_page("PUBLICATIONS")
+    blocks = build_blocks(lines, headings, load_thresholds()["stage3_sections"], use_content=False)
+    assert not any("continues" in b for b in blocks)
+    plain = [_pl(0, "WORK EXPERIENCE", 1), _pl(1, "Lecturer, Duskmoor University, 2020 - 2024", 1),
+             _pl(2, "Research Engineer, Glimmerworks Labs Pvt Ltd, 2017 - 2020", 2)]
+    blocks = build_blocks(plain, {0: ("experience", "experience", "alias")}, load_thresholds()["stage3_sections"],
+                          use_content=False)
+    assert not any("continues" in b for b in blocks) and len(blocks[-1]["lines"]) == 2
+
+
+def test_continued_block_is_mapped_to_the_main_column_section(tmp_path):
+    import synthetic_sweep as sweep
+    import synthetic_sweep_gen as gen
+
+    spec = gen.combo(61)  # a sidebar CV whose experience continues on page 2
+    assert spec.factors["layout"].startswith("sidebar") and spec.factors["pages"] == "two"
+    result = sweep.score(spec, tmp_path)
+    assert result["sections"]["experience"]["S4"], result["sections"]["experience"]

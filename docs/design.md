@@ -156,7 +156,10 @@ always picks the same method.
     block;
   - reordered lines get `column` (full, left, right) and `column_start`; stage 3 starts a new
     block at a `column_start` line, so a sidebar or a column without a heading never joins the
-    section before it (stage 4 maps such a block from its content).
+    section before it (stage 4 maps such a block from its content). When the page after a page
+    read by columns is not read by columns and starts with no heading, its first block continues
+    the main column's last section (the column read first), not the column or sidebar read last:
+    stage 3 marks it `continues` that block, and stage 4 gives it the same section.
   A page without a clear gutter keeps its lines exactly as before, with no column fields. Pages read by columns get the note
   `columns_reordered`; pages that only pass a looser gutter test (8 pt, 25%, 3 lines, 15%) get
   `possible_columns`. Both are sidecar flags only: they never change a stage status, a
@@ -363,7 +366,10 @@ and starts like an author list; other lines are wrapped parts, also across pages
 `hanging_indent_split` (an entry starts at the left margin of its section and page; indented
 lines are wrapped parts), `paragraph_split`, `whole_section_one_entry` (always WARN). Fields as
 printed: title (quoted text, else the text after the author list up to the end of that sentence
-or the comma before the venue), venue (the first segment after the title with a journal,
+or the comma before the venue; a single author written as a full name, "Firstname Lastname
+(2022). Title", counts as the author list only when no other rule finds a title and at least
+`full_name_author_min_entries` or `full_name_author_min_share` of the section's entries start that
+way), venue (the first segment after the title with a journal,
 conference or publisher word, else the first that is not volume, pages, year or DOI; when that
 gives nothing, the segment right after the title if it has at most 8 words and is not volume,
 pages, year, DOI or an author list; otherwise empty; a leading

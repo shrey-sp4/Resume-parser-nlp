@@ -3,7 +3,9 @@
 Each stage 3 block is one unit ("block_001", ...) and gets its own method choice:
   exact_alias_map             the normalised heading is an alias (the first block, which has
                               no heading, is the personal block; a later block that starts a
-                              new column with no heading is left to the other methods)
+                              new column with no heading is left to the other methods; a
+                              block marked continues by stage 3 gets the section of the block
+                              it continues)
                                                                                  confidence 1.0
   fuzzy_alias_match           fuzz.ratio of the whole normalised heading against every alias
                               is at least fuzzy_min (thresholds.json)            confidence ratio/100
@@ -66,6 +68,8 @@ def exact_alias_map(payload) -> MethodOutput:
     if block["heading_line"] is None:
         if block.get("guess_source") == "column":  # a column with no heading: mapped by content
             return MethodOutput(None)
+        if block.get("continues"):  # takes the mapping of the block it continues (run_normalize)
+            return MethodOutput(_mapping(block.get("guess") or "other", None, 1.0, "continued"))
         return MethodOutput(_mapping("personal", None, 1.0, "position"))
     found = exact_alias(block["heading_raw"])
     if not found:
@@ -194,6 +198,11 @@ def run_normalize(pdf_path: Path, ctx: Context) -> StageResult:
         ctx.thresholds["accept_threshold"]["stage4"],
         units=units,
     )
+    for b in blocks:  # a block that continues another on the next page gets that block's section
+        if b.get("continues") in result.data:
+            target = result.data[b["continues"]]
+            result.data[b["block_id"]] = dict(result.data[b["block_id"]], name=target["name"],
+                                              original_name=target["original_name"])
     document = build_document(resume_id_for(ctx.resume_file), blocks, result.data)
     stage2_lines = (ctx.results["stage2"].data or {}).get("lines") or []
     result.data = document

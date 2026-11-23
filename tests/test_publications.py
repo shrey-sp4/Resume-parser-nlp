@@ -374,3 +374,26 @@ def test_bare_list_numbers_start_entries_only_in_a_sequence_of_three():
     assert len(_run(down, pb.marker_split)["entries"]) == 3
     lines = [_line(i, t) for i, t in enumerate(texts[:2] + ["12 Placeholder Toy Notes, 2020"])]
     assert pb._bare_number_starts(lines, ["entry"] * 3) == set()  # 1, 2, 12: no run of three
+
+
+def test_single_full_name_author_when_the_section_is_consistent():
+    data = _run(["1. Mira Testwood (2023). Quiet lattices in pretend crystals. Journal of Invented Biology.",
+                 "2. Mira Testwood (2022). Folding light in toy fibres. Journal of Toy Physics.",
+                 "3. Mira Testwood. Hollow tides in made-up forests. Journal of Placeholder Notes, 2021."],
+                pb.marker_split)
+    assert [e["title"] for e in data["entries"]] == ["Quiet lattices in pretend crystals", "Folding light in toy fibres",
+                                                     "Hollow tides in made-up forests"]
+    assert pb.full_name_authors(["Mira Testwood (2023). Quiet lattices in pretend crystals."] * 3, PARAMS)
+
+
+def test_single_full_name_author_is_blocked_when_only_one_entry_has_it():
+    texts = ["1. M. Testwood, R. Doe. Modelling gene networks with sparse graphs. Journal of Invented Biology, 2019.",
+             "2. M. Testwood. Thin films that do not exist. Journal of Toy Physics, 2020.",
+             "3. R. Doe, M. Testwood. Toy chemistry revisited. Journal of Placeholder Notes, 2021.",
+             "4. Mira Testwood. Hollow tides in made-up forests. Journal of Placeholder Notes, 2018."]
+    assert not pb.full_name_authors(texts, PARAMS)  # one of four: the guard keeps the rule off
+    data = _run(texts, pb.marker_split)
+    assert "Hollow tides in made-up forests" not in [e["title"] for e in data["entries"]]
+    # an entry another rule already reads is read the same way with or without the permission
+    text = "M. Testwood, R. Doe. Modelling gene networks with sparse graphs. Journal of Invented Biology, 2019."
+    assert pb.find_title(text, True) == pb.find_title(text, False)

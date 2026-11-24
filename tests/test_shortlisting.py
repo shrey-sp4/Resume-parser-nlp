@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from resume_parser.schema import REPO_ROOT
+from resume_parser.schema import REPO_ROOT, load_config
 from shortlisting import cli, features
 from shortlisting.bm25 import BM25, tokenize
 from shortlisting.profile import RequirementProfile, job_ad_keywords
@@ -102,7 +102,7 @@ def test_unreadable_parses_are_listed_apart_and_review_rules():
                                    cand("r_00000002", [edu()], [job()], [pub()] * 6, decision="NEEDS_REVIEW"),
                                    cand("r_00000003", [edu(inst="Override University")], [job()], [pub()] * 6)], stability=False))
     assert (results["r_00000001"]["tier"], results["r_00000001"]["score"], results["r_00000001"]["rank"]) == ("Unreadable", None, None)
-    assert "parse decision NEEDS_REVIEW" in results["r_00000002"]["tier_reasons"]
+    assert "parse_decision:NEEDS_REVIEW" in results["r_00000002"]["parser_flags"]
     assert "education: editorial override" in results["r_00000003"]["tier_reasons"]
 
 
@@ -231,3 +231,28 @@ def test_cli_writes_a_ranked_csv_outside_the_repo_only(tmp_path, monkeypatch, ca
     assert "Invented Person" not in text and "alpha" not in text and "beta" not in text
     assert cli.main(["--profile", str(profile), "--outputs", str(out_dir), "--out", str(REPO_ROOT / "x.csv")]) == 2
     assert not (REPO_ROOT / "x.csv").exists()
+
+
+def _needs_review_pool():
+    return [cand("r_00000001", [edu()], [job()], [pub()] * 7, decision="NEEDS_REVIEW"),
+            cand("r_00000002", [edu()], [job()], [pub()] * 7, decision="FAIL")]
+
+
+def test_needs_review_parse_is_a_flag_only_by_default():
+    assert load_config("shortlisting.json")["parse_decision_forces_review"] is False
+    nr, fail = scorer().score_pool(_needs_review_pool())
+    assert nr["tier"] == "Shortlist" and "parse decision NEEDS_REVIEW" not in nr["tier_reasons"]
+    assert nr["parser_flags"] == ["parse_decision:NEEDS_REVIEW"] and nr["parse_decision"] == "NEEDS_REVIEW"
+    assert fail["tier"] == "Unreadable"
+    # the other Review triggers stay
+    other = scorer().score_pool([cand("r_3", [edu(inst="Override University")], [job()], [pub()] * 7, decision="NEEDS_REVIEW")])[0]
+    assert other["tier"] == "Review" and other["tier_reasons"] == ["education: editorial override"]
+
+
+def test_needs_review_parse_forces_review_when_set():
+    cfg = load_config("shortlisting.json")
+    cfg["parse_decision_forces_review"] = True
+    profile = RequirementProfile(mode="default", experience_kind="academic", experience_years=5)
+    nr, fail = Shortlister(profile, FakeVenues(), FakeInstitutions(), today=TODAY, config=cfg).score_pool(_needs_review_pool())
+    assert (nr["tier"], nr["tier_reasons"]) == ("Review", ["parse decision NEEDS_REVIEW"])
+    assert "parse_decision:NEEDS_REVIEW" in nr["parser_flags"] and fail["tier"] == "Unreadable"

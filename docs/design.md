@@ -957,8 +957,10 @@ usable weight share and the mean certainty. Eligibility (pass / fail / unknown):
 institution cutoff (education mode), venue cutoff (publications mode), experience tier
 (experience mode); unlisted institutions and unknown venues give unknown, never fail. Tiers:
 Unreadable (FAIL parse, listed apart), Hold (any eligibility fail, listed with the reason),
-Review (low certainty, an unusable key component, an unknown eligibility check, an editorial
-override or unlisted institution, or a NEEDS_REVIEW parse), Shortlist (score at least 0.6 with
+Review (low certainty, an unusable key component, an unknown eligibility check, or an editorial
+override or unlisted institution; a NEEDS_REVIEW parse is a parser flag on the card,
+`parse_decision:NEEDS_REVIEW`, and forces Review only when `parse_decision_forces_review` is true,
+default false), Shortlist (score at least 0.6 with
 certainty at least medium), else Hold. Rank stability: 50 re-scorings (fixed seed) with 10% of
 entries dropped and 5% of types flipped give a rank range per candidate. The explanation card is
 data only (values, certainties, entry indices, tier labels, parser flag codes, dropped

@@ -18,8 +18,9 @@ institution or an unknown venue gives unknown, never fail.
 
 Tier: Unreadable for a FAIL parse (listed apart, never rejected); Hold for any eligibility fail
 (listed with the reason); Review when overall certainty is low, a key component is unusable, an
-eligibility check is unknown, an editorial override or an unlisted institution was involved, or the
-parse decision is NEEDS_REVIEW; Shortlist when the score reaches shortlist_threshold with
+eligibility check is unknown, or an editorial override or an unlisted institution was involved (a
+NEEDS_REVIEW parse is shown as the parser flag parse_decision:NEEDS_REVIEW, and also forces Review
+only when config parse_decision_forces_review is true); Shortlist when the score reaches shortlist_threshold with
 certainty at least medium; Hold otherwise.
 
 Rank stability: the pool re-scored ``runs`` times (fixed seed) with simulated parser noise (each
@@ -192,7 +193,7 @@ class Shortlister:
         review += [f"eligibility unknown: {k}" for k, v in elig.items() if v["result"] == "unknown"]
         for n, c in comps.items():
             review += [f"{n}: {note.replace('_', ' ')}" for note in c.notes if note in ("editorial_override", "unlisted_institution")]
-        if cand.decision == "NEEDS_REVIEW":
+        if cand.decision == "NEEDS_REVIEW" and self.cfg.get("parse_decision_forces_review", False):
             review.append("parse decision NEEDS_REVIEW")
         if review:
             return "Review", review
@@ -216,9 +217,12 @@ class Shortlister:
             if cand.decision == "FAIL":
                 score = None
             tier, why = self._tier(cand, score, certainty, comps, elig)
+            flags = list(cand.flags)
+            if cand.decision == "NEEDS_REVIEW":
+                flags.append("parse_decision:NEEDS_REVIEW")  # shown on the card, code only
             results.append({
                 "resume_id": cand.resume_id, "mode": self.profile.mode, "parse_decision": cand.decision,
-                "parser_flags": list(cand.flags), "score": None if score is None else round(score, 4),
+                "parser_flags": flags, "score": None if score is None else round(score, 4),
                 "certainty": certainty, "weights_used": used, "dropped_components": dropped,
                 "components": {n: c.as_dict() for n, c in comps.items()}, "eligibility": elig,
                 "tier": tier, "tier_reasons": why})

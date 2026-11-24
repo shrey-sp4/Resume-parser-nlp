@@ -36,5 +36,7 @@
   "certainty_values": {"high": 1.0, "medium": 0.6, "low": 0.3},
   "overall_certainty": {"high": {"min_share": 0.9, "min_mean": 0.85}, "medium": {"min_share": 0.6, "min_mean": 0.5}},
   "shortlist_threshold": 0.6,
+  "parse_decision_forces_review_comment": "false: a NEEDS_REVIEW parse is shown on the card as a parser flag only and does not by itself send the candidate to Review (FAIL parses stay Unreadable); true: a NEEDS_REVIEW parse always means Review.",
+  "parse_decision_forces_review": false,
   "stability": {"runs": 50, "seed": 13, "drop_rate": 0.10, "flip_rate": 0.05}
 }

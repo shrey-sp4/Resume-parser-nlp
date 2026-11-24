@@ -6,8 +6,10 @@ parser output, aggregates only.
 Development groups only (dev, tuned, dev2); validation, test_frozen, final and fresh are never
 read, and nothing is tuned here. Three invented requirement profiles (computing, economics,
 design), each in the four modes. Per mode and profile: Spearman rank correlation of the GT-based
-and parser-based scores, overlap of the two top-5 lists, tier agreement (also with the parser's
-NEEDS_REVIEW decision ignored, which isolates the content), and the share of candidates in each
+and parser-based scores, overlap of the two top-5 lists, tier agreement (with the configured
+parse_decision_forces_review, and as if it were true), GT-Shortlist candidates by parser tier,
+parser-Shortlist candidates that are GT-Hold, and the component behind each GT-Shortlist that the
+parser side holds, and the share of candidates in each
 tier. A FAIL parse has no score and is left out of the correlation. Nothing is written; no resume
 text, name, venue or institution is printed.
 """
@@ -17,6 +19,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import sys
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,7 +30,7 @@ from common import EvalError  # noqa: E402
 from scipy.stats import spearmanr  # noqa: E402
 
 from experience_check import stage1_text  # noqa: E402
-from resume_parser.schema import DataDirError, read_json, resume_id_for  # noqa: E402
+from resume_parser.schema import DataDirError, load_config, read_json, resume_id_for  # noqa: E402
 from shortlisting.profile import MODES, RequirementProfile  # noqa: E402
 from shortlisting.scorer import TIER_ORDER, Candidate, Shortlister  # noqa: E402
 from shortlisting.tiers.institutions import load_index as load_institutions  # noqa: E402
@@ -49,8 +52,8 @@ PROFILES = {
 }
 
 
-def candidates(stems: list[str]) -> tuple[list[Candidate], list[Candidate], list[Candidate]]:
-    gt, parsed, parsed_plain = [], [], []
+def candidates(stems: list[str]) -> tuple[list[Candidate], list[Candidate]]:
+    gt, parsed = [], []
     for stem in stems:
         rid, text = resume_id_for(stem), stage1_text(stem)
         gt.append(Candidate(rid, read_json(common.gt_dir() / f"{stem}.json"), None, [], text))
@@ -59,9 +62,22 @@ def candidates(stems: list[str]) -> tuple[list[Candidate], list[Candidate], list
         side = read_json(meta) if meta.is_file() else {}
         flags = sorted({f.get("code", "") for f in side.get("flags") or [] if isinstance(f, dict)})
         parsed.append(Candidate(rid, resume, side.get("decision"), flags, text))
-        decision = "FAIL" if side.get("decision") == "FAIL" else None  # NEEDS_REVIEW ignored
-        parsed_plain.append(Candidate(rid, resume, decision, flags, text))
-    return gt, parsed, parsed_plain
+    return gt, parsed
+
+
+def hold_cause(g: dict, p: dict) -> list[str]:
+    """Why a GT-Shortlist candidate is Hold from the parser: the eligibility checks that fail, or
+    else the component whose weighted contribution fell most (marked when unusable on the parser side)."""
+    fails = [k for k, v in p["eligibility"].items() if v["result"] == "fail"]
+    if fails:
+        return [f"eligibility fail: {k}" for k in fails]
+    drop = {}
+    for n in g["components"]:
+        gv = g["components"][n]["value"] or 0.0
+        pv = p["components"][n]["value"] or 0.0
+        drop[n] = g["weights_used"].get(n, 0) * gv - p["weights_used"].get(n, 0) * pv
+    n = max(drop, key=lambda k: (drop[k], k))
+    return [n + (" (unusable from the parser)" if p["components"][n]["value"] is None else "")]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -71,36 +87,53 @@ def main(argv: list[str] | None = None) -> int:
     try:
         groups = common.load_groups()
         stems = sorted({s for g in common.DEV_GROUPS for s in groups[g]})
-        gt, parsed, plain = candidates(stems)
+        gt, parsed = candidates(stems)
         venues, institutions = load_venues(), load_institutions()
     except (EvalError, DataDirError) as exc:
         print(f"shortlist_check: {exc}", file=sys.stderr)
         return 2
+    cfg = load_config("shortlisting.json")
+    forced_cfg = dict(cfg, parse_decision_forces_review=True)
     n = len(stems)
-    print(f"=== SHORTLISTING: GT-based vs parser-based ranking ({n} development resumes; today {a.today}) ===")
-    print(f"  parse decisions: " + ", ".join(f"{d} {sum(c.decision == d for c in parsed)}" for d in ("ACCEPT", "NEEDS_REVIEW", "FAIL")))
-    head = f"  {'profile':<11}{'mode':<14}{'spearman':>9}{'top5':>6}{'tier agree':>12}{'(no NR)':>9}  " \
-           f"{'tier shares GT: S/R/H/U':<26}{'parser: S/R/H/U':<20}{'parser no NR: S/R/H/U'}"
-    print(head)
+    print(f"=== SHORTLISTING: GT-based vs parser-based ranking ({n} development resumes; today {a.today}; "
+          f"parse_decision_forces_review={cfg['parse_decision_forces_review']}) ===")
+    print("  parse decisions: " + ", ".join(f"{d} {sum(c.decision == d for c in parsed)}" for d in ("ACCEPT", "NEEDS_REVIEW", "FAIL")))
+    print(f"  {'profile':<11}{'mode':<14}{'spearman':>9}{'top5':>6}{'tier agree':>12}{'(forced)':>10}  "
+          f"{'GT S/R/H/U':<12}{'parser S/R/H/U':<16}{'GT-S -> parser S/R/H/U':<24}{'parser-S that are GT-H':>23}")
+    all_causes, totals = Counter(), Counter()
     for pname, spec in PROFILES.items():
         for mode in MODES:
             profile = RequirementProfile(mode=mode, **spec)
             sides = []
-            for pool in (gt, parsed, plain):
-                s = Shortlister(profile, venues, institutions, today=a.today)
+            for pool, conf in ((gt, cfg), (parsed, cfg), (parsed, forced_cfg)):
+                s = Shortlister(profile, venues, institutions, today=a.today, config=conf)
                 sides.append({r["resume_id"]: r for r in s.rank(pool, stability=False)})
-            g, p, q = sides
+            g, p, forced = sides
             both = [rid for rid in g if g[rid]["score"] is not None and p[rid]["score"] is not None]
             rho = spearmanr([g[r]["score"] for r in both], [p[r]["score"] for r in both]).statistic if len(both) > 2 else float("nan")
             top = lambda side: {r for r, x in sorted(side.items(), key=lambda kv: (kv[1]["rank"] or 10 ** 9, kv[0]))[:5]}  # noqa: E731
             overlap = len(top(g) & top(p))
             agree = sum(g[r]["tier"] == p[r]["tier"] for r in g)
-            agree_plain = sum(g[r]["tier"] == q[r]["tier"] for r in g)
+            agree_forced = sum(g[r]["tier"] == forced[r]["tier"] for r in g)
             shares = lambda side: "/".join(str(sum(x["tier"] == t for x in side.values())) for t in TIER_ORDER)  # noqa: E731
-            print(f"  {pname:<11}{mode:<14}{rho:>9.2f}{overlap:>4}/5{agree:>8}/{n:<3}{agree_plain:>5}/{n:<3}  "
-                  f"{shares(g):<26}{shares(p):<20}{shares(q)}")
-    print("  (S/R/H/U = Shortlist / Review / Hold / Unreadable; '(no NR)' and 'parser no NR' ignore the parser's"
-          " NEEDS_REVIEW decision)")
+            gs = [r for r in g if g[r]["tier"] == "Shortlist"]
+            cross = Counter(p[r]["tier"] for r in gs)
+            ps_gh = sum(1 for r in p if p[r]["tier"] == "Shortlist" and g[r]["tier"] == "Hold")
+            for r in gs:
+                totals["GT-S"] += 1
+                totals[f"GT-S -> parser {p[r]['tier']}"] += 1
+                if p[r]["tier"] == "Hold":
+                    all_causes.update(hold_cause(g[r], p[r]))
+            totals["parser-S"] += sum(1 for r in p if p[r]["tier"] == "Shortlist")
+            totals["parser-S that are GT-H"] += ps_gh
+            print(f"  {pname:<11}{mode:<14}{rho:>9.2f}{overlap:>4}/5{agree:>8}/{n:<3}{agree_forced:>6}/{n:<3}  "
+                  f"{shares(g):<12}{shares(p):<16}{'/'.join(str(cross[t]) for t in TIER_ORDER):<24}{ps_gh:>23}")
+    print("  (S/R/H/U = Shortlist / Review / Hold / Unreadable; '(forced)' = tier agreement if NEEDS_REVIEW still forced Review)")
+    print(f"\n  over all 12 rows: GT-Shortlist {totals['GT-S']} -> parser Shortlist {totals['GT-S -> parser Shortlist']}, "
+          f"Review {totals['GT-S -> parser Review']}, Hold {totals['GT-S -> parser Hold']}, "
+          f"Unreadable {totals['GT-S -> parser Unreadable']}; parser-Shortlist {totals['parser-S']}, "
+          f"of which GT-Hold {totals['parser-S that are GT-H']}")
+    print("  GT-Shortlist that is parser-Hold, by cause: " + ", ".join(f"{k} {v}" for k, v in all_causes.most_common()))
     return 0
 
 

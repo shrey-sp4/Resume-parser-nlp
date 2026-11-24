@@ -969,6 +969,21 @@ name, gender, age, date of birth, photo or nationality field (a test checks it).
 `python -m shortlisting.cli` writes a ranked CSV outside the repo; `eval/shortlist_check.py`
 compares GT-based and parser-based rankings on the development resumes (aggregates only).
 
+**Recruiter UI (`app/streamlit_app.py`, launched with `streamlit run app/streamlit_app.py`).**
+The only file that imports streamlit; all work is in `src/shortlisting/service.py`
+(`run_shortlist`: parse each PDF, cache the parser output by file hash, score, rank). The work
+folder is `RESUME_SHORTLIST_DIR`, else `RESUME_DATA_DIR/shortlist_runs`; a folder inside the repo
+is refused, and uploads, the cache and CSV exports stay there. Screens: CVs (a folder or an
+upload, with the count found), requirements (mode with one sentence each, field, minimum degree,
+experience kind and years only in experience mode, institution cutoff only in education mode,
+venue cutoff only in publications mode, keywords and synonyms, keyword suggestions from a pasted
+job ad), a run button with a progress bar, and results in four tabs (Shortlist, Review, Hold,
+Unreadable) with a table (rank, file, score, certainty, parser flag; Hold and Unreadable also
+show the reason in plain words, never "rejected" or "failed") and a card per candidate (value
+and certainty bars, evidence as entry numbers and tier labels, dropped components, the rank
+range, eligibility, any editorial override), the decision-support note, and a CSV export to the
+work folder. No name, gender, age, photo or nationality is shown or used.
+
 ## 8. Repo layout
 
 ```

@@ -11,7 +11,23 @@
     "categories_included": ["Overall", "University", "College", "Research", "Engineering", "Management", "Pharmacy",
                             "Medical", "Dental", "Law", "Architecture", "Agriculture"],
     "categories_excluded": ["Innovation", "SDGInstitutions", "OPENUNIVERSITY", "SKILLUNIVERSITY", "STATEPUBLICUNIVERSITY"],
-    "tier_bands": [[1, 25, "Tier 1"], [26, 100, "Tier 2"], [101, 200, "Tier 3"]]
+    "tier_bands": [[1, 25, "Tier 1"], [26, 100, "Tier 2"], [101, 200, "Tier 3"]],
+    "always_counted": ["Overall", "University", "College", "Research"],
+    "discipline_categories": ["Engineering", "Management", "Pharmacy", "Medical", "Dental", "Law", "Architecture", "Agriculture"],
+    "field_categories_comment": "Role field (the keys of config/venue_fields.json) -> the NIRF discipline categories that count for it, on top of always_counted. With no field, only always_counted counts, so a top-25 Dental rank never makes a college Tier 1 for a computing role.",
+    "field_categories": {
+      "ai_ml_data_science": ["Engineering"],
+      "algorithms_theory": ["Engineering"],
+      "communications_signal_processing": ["Engineering"],
+      "software_networking": ["Engineering"],
+      "vlsi_embedded": ["Engineering"],
+      "economics": ["Management"],
+      "law": ["Law"],
+      "humanities_social_sciences_design": ["Architecture"],
+      "agriculture_analytics": ["Agriculture"],
+      "physics_mathematical_sciences": [],
+      "interdisciplinary": []
+    }
   },
   "institution_fuzzy": {
     "_comment": "Institution names: order-sensitive rapidfuzz ratio on the content words (so 'Washington University' never meets 'University of Washington') and the token guard in order.",
@@ -33,6 +49,8 @@
     "short_min_tokens": 3
   },
   "scimago_journal_types": ["journal", "trade journal", "book series"],
+  "journal_rules_comment": "Three more rules for a journal venue that nothing else matched (prefix, colon, publisher; src/shortlisting/tiers/venues.py); a rule that fits more than one title is refused.",
+  "journal_rules": true,
   "quartile_tier": {"Q1": "A", "Q2": "B", "Q3": "C", "Q4": "C"},
   "core_rank_tier": {"A*": "A", "A": "A", "B": "B", "C": "C"}
 }

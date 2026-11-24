@@ -844,7 +844,15 @@ hand-written seed lists.
   "proceedings" and publisher words; an acronym ICORE lists twice is resolved by shared title
   words; a workshop, companion, tutorial, poster or demo never takes its main conference's rank.
   When the whole string finds nothing, each comma-separated part of two or more content words is
-  tried ("Name, City, Country").
+  tried ("Name, City, Country"). A journal that still finds nothing gets three more rules, in
+  this order, each refused when it fits more than one title, and the method names the rule:
+  prefix (a dotted abbreviation the table does not resolve, such as "Hydrodyn.", stands for a
+  title word it begins, 3+ characters; same number of content words, in order, all others equal),
+  colon (the venue is the main title before a colon of exactly one journal) and publisher
+  (Elsevier, Springer, Wiley and similar words dropped when 3+ content words remain, then the usual
+  methods). They never change a journal matched before them. Not adopted, after an in-memory
+  trial on the development GT: a prefix on unabbreviated words, singular/plural matching, and
+  case-insensitive conference acronyms.
 - Role field (`config/venue_fields.json`, 11 DAU areas, every name checked against the SCImago
   list at load): the best quartile among the journal's categories in the field; when none is in
   the field, the best overall quartile, marked `out_of_field`; with no field, the best overall.
@@ -862,9 +870,29 @@ hand-written seed lists.
   Architecture, Agriculture; Innovation, SDG, Open, Skill and State Public University rank within
   a narrow group and stay off unless switched on. One institution is joined across categories by
   its NIRF ID (the part after the category letter); a band row joins the same name and state.
-  Tier = the best rank over its categories, a band counting at its lower bound: 1-25 Tier 1,
-  26-100 Tier 2, 101-200 Tier 3, else unlisted. A small category counts like any other (rank 20 in
-  Dental is Tier 1).
+  Tier = the best rank over its counted categories, a band counting at its lower bound: 1-25
+  Tier 1, 26-100 Tier 2, 101-200 Tier 3, else unlisted. Field-aware: Overall, University, College
+  and Research always count; a discipline category (Engineering, Management, Pharmacy, Medical,
+  Dental, Law, Architecture, Agriculture) counts only when the recruiter's field maps to it
+  (`config/tiers.json` nirf.field_categories: the five computing fields -> Engineering, Economics
+  -> Management, Law -> Law, Humanities, Social Sciences and Design -> Architecture, Agriculture
+  Analytics -> Agriculture, Physics and Mathematical Sciences and Interdisciplinary -> none). With
+  no field, only the four general categories count, so a top-25 Dental rank never makes a college
+  Tier 1 for a computing role. The result names the category that gave the best rank, the counted
+  categories, and every category with its rank and whether it counted; an institution ranked only
+  in categories that do not count is unlisted (`no_rank_in_counted_categories`).
+- NIRF names checked by hand: Dhirubhai Ambani University is listed under its former name
+  (Dhirubhai Ambani Institute of Information and Communication Technology, Engineering 201-300),
+  so DA-IICT, DAU and the new name are aliases of it; by the NIRF rule alone it is unlisted (no
+  general rank, and its Engineering band is beyond 200).
+- Editorial overrides (`config/institution_overrides.json`, optional): an institution named there
+  takes the tier written there for every field, before NIRF and the seed list, and every result
+  it gives says source, method and reason "editorial override". The only entry is Dhirubhai
+  Ambani University (with DAU and DA-IICT), Tier 2; deleting the file returns it to the NIRF rule.
+  There are no overrides for SRM or IACS. NIRF writes "S.R.M. Institute of Science
+  and Technology" (aliases SRMIST, SRM Institute of Science and Technology; not "SRM University"
+  alone, which also names other universities). The Indian Association for the Cultivation of
+  Science is on none of the saved pages and stays unlisted.
 - Other institutions: `config/institution_global_seed.json`, an editorial list of about 100
   widely recognised non-Indian universities and schools (technical, economics, law, design), all
   Tier 1. It is a seed for review, not a ranking, and not copied from any ranking. Every other

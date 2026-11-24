@@ -6,11 +6,21 @@ Architecture, Agriculture by default), each a ranked page (Institute ID, Name, C
 Score, Rank) plus rank-band pages (Name, City, State; the band in the page heading). The
 "ALL" pages list participants, not ranks, and are never read. One institution is joined across
 categories by its NIRF ID (IR-O-U-0456 and IR-E-U-0456 are the same, U-0456); a band row joins
-the institution of the same name and state. Tier = the best rank over all its categories, a band
-counting at its lower bound: 1-25 Tier 1, 26-100 Tier 2, 101-200 Tier 3; anything else unlisted.
+the institution of the same name and state. Tier = the best rank over its COUNTED categories, a
+band counting at its lower bound: 1-25 Tier 1, 26-100 Tier 2, 101-200 Tier 3; anything else
+unlisted. Counted (config/tiers.json): Overall, University, College and Research always; a
+discipline category (Engineering, Management, Pharmacy, Medical, Dental, Law, Architecture,
+Agriculture) only when the role field maps to it (nirf.field_categories); with no field, only
+the general four. The result names the category that gave the best rank (best_category), the
+counted categories, and every category with its rank and whether it counted. An institution
+ranked only in categories that do not count is unlisted (no_rank_in_counted_categories).
 Global seed (config/institution_global_seed.json): an editorial list of non-Indian
 universities, all Tier 1; it is not a ranking. Every other institution is unlisted.
 Unlisted (and ambiguous) means review, never rejection: tier None, review True.
+Editorial overrides (config/institution_overrides.json, optional): an institution named there
+(by its name or an alias, after the usual alias table) takes the tier written there, for every
+field, before NIRF and the seed list; its result says source, method and reason "editorial
+override". Without the file there are no overrides.
 
 Matching, on each normalised form of the name (abbreviations of
 config/institution_aliases.json expanded; a parenthesised part kept or dropped; city synonyms
@@ -32,7 +42,7 @@ from functools import lru_cache
 from html.parser import HTMLParser
 from pathlib import Path
 
-from resume_parser.schema import load_config
+from resume_parser.schema import CONFIG_DIR, load_config, read_json
 from shortlisting.tiers.lexicons import LexiconError, lexicon_file, tier_settings
 from shortlisting.tiers.text import FuzzyMatcher, content_tokens, normalise, variants
 
@@ -40,6 +50,19 @@ PAGE = re.compile(r"^(?P<cat>[A-Za-z]+?)Ranking(?P<suffix>\d+|ALL)?$")
 BAND = re.compile(r"Rank\s*-?\s*band\s*:\s*(\d+)\s*-\s*(\d+)", re.IGNORECASE)
 NIRF_ID = re.compile(r"^IR-[A-Z]+-([A-Z]+-\d+)$")
 _PAREN = re.compile(r"\([^)]*\)")
+
+
+OVERRIDES_FILE = "institution_overrides.json"
+
+
+def overrides_path() -> Path:
+    return CONFIG_DIR / OVERRIDES_FILE
+
+
+def load_overrides() -> dict:
+    """config/institution_overrides.json, or no overrides when the file is absent."""
+    path = overrides_path()
+    return read_json(path) if path.is_file() else {"overrides": []}
 
 
 def ckey(norm: str) -> str:
@@ -81,6 +104,8 @@ class InstitutionResult:
     categories: list = dc_field(default_factory=list)
     certainty: str = "none"
     reason: str = "not_listed"
+    field: str | None = None
+    counted_categories: list = dc_field(default_factory=list)
     from_part: bool = False
 
     def as_dict(self) -> dict:
@@ -173,11 +198,13 @@ def load_nirf(folder: Path, categories: list[str]) -> tuple[list[NirfEntry], lis
 
 class InstitutionIndex:
     def __init__(self, entries: list[NirfEntry], seed: dict | None = None, aliases: dict | None = None,
-                 settings: dict | None = None):
+                 settings: dict | None = None, overrides: dict | None = None):
         self.settings = settings if settings is not None else tier_settings()
         nirf = self.settings["nirf"]
         self.edition = nirf.get("edition", "nirf")
         self.bands = [tuple(b) for b in nirf["tier_bands"]]
+        self.always_counted = list(nirf.get("always_counted", nirf["categories_included"]))
+        self.field_categories = {k: list(v) for k, v in nirf.get("field_categories", {}).items()}
         cfg = aliases if aliases is not None else load_config("institution_aliases.json")
         self.abbr = cfg.get("abbreviations", {})
         self.patterns = [(ckey(normalise(p["short"])), ckey(normalise(p["long"]))) for p in cfg.get("patterns", [])]
@@ -211,6 +238,11 @@ class InstitutionIndex:
         for s in seed.get("institutions", []):
             for n in [s["name"], *s.get("aliases", [])]:
                 self.seed.setdefault(ckey(normalise(n)), s["name"])
+        # editorial overrides win over NIRF and the seed list, for every field, and always say so
+        self.overrides: dict[str, dict] = {}
+        for o in (overrides if overrides is not None else load_overrides()).get("overrides", []):
+            for n in [o["name"], *o.get("aliases", [])]:
+                self.overrides.setdefault(ckey(normalise(n)), o)
         fuzzy = self.settings["institution_fuzzy"]
         self.nirf_matcher = FuzzyMatcher(self.by_name, fuzzy)
         self.seed_matcher = FuzzyMatcher(self.seed, fuzzy)
@@ -245,47 +277,75 @@ class InstitutionIndex:
     def _tier_of(self, rank: int) -> str | None:
         return next((label for lo, hi, label in self.bands if lo <= rank <= hi), None)
 
-    def _nirf_result(self, identities: set, method: str, score: float, text: str) -> InstitutionResult:
+    def counted_categories(self, field_name: str | None) -> list[str]:
+        """The NIRF categories whose ranks count: always_counted, plus the discipline categories
+        the role field maps to (config/tiers.json nirf.field_categories)."""
+        if not field_name:
+            return list(self.always_counted)
+        if field_name not in self.field_categories:
+            raise KeyError(f"unknown field {field_name!r} (config/tiers.json nirf.field_categories)")
+        return list(dict.fromkeys(self.always_counted + self.field_categories[field_name]))
+
+    def _best(self, inst: Institution, counted: list[str]):
+        ranks = [r for r in inst.ranks if r[2] in counted]
+        return min(ranks, key=lambda r: (r[0], r[2])) if ranks else None
+
+    def _nirf_result(self, identities: set, method: str, score: float, text: str, counted: list[str],
+                     field_name: str | None = None) -> InstitutionResult:
         insts = [self.institutions[i] for i in sorted(identities)]
+        tier_of = lambda i: self._tier_of(b[0]) if (b := self._best(i, counted)) else None  # noqa: E731
         if len(insts) > 1:  # several campuses share the name: a city or state in the text decides
             words = set(normalise(text).split())
             named = [i for i in insts if words & set(normalise(f"{i.city} {i.state}").split())]
             if len(named) == 1:
                 insts = named
-            elif len({self._tier_of(min(r[0] for r in i.ranks)) for i in insts}) != 1:
+            elif len({tier_of(i) for i in insts}) != 1:
                 return InstitutionResult(status="ambiguous", source=self.edition, method=method,
                                          match_score=round(score, 1), reason="ambiguous_campus")
         inst = insts[0]
-        best = min(inst.ranks, key=lambda r: (r[0], r[2]))
-        tier = self._tier_of(best[0])
+        best = self._best(inst, counted)
+        tier = self._tier_of(best[0]) if best else None
         return InstitutionResult(
             tier=tier, status="listed" if tier else "unlisted", review=tier is None, source=self.edition,
-            matched_name=sorted(inst.names)[0], match_score=round(score, 1), method=method, best_rank=best[0],
-            best_rank_label=best[1], best_category=best[2],
-            categories=[{"category": c, "rank": label} for _, label, c in sorted(inst.ranks, key=lambda r: (r[0], r[2]))],
+            matched_name=sorted(inst.names)[0], match_score=round(score, 1), method=method,
+            best_rank=best[0] if best else None, best_rank_label=best[1] if best else None,
+            best_category=best[2] if best else None, field=field_name, counted_categories=list(counted),
+            categories=[{"category": c, "rank": label, "counted": c in counted}
+                        for _, label, c in sorted(inst.ranks, key=lambda r: (r[0], r[2]))],
             certainty=("high" if method in ("alias", "pattern", "exact") else "medium") if tier else "none",
-            reason="ok" if tier else "ranked_beyond_200")
+            reason="ok" if tier else ("ranked_beyond_200" if best else "no_rank_in_counted_categories"))
+
+    def _override_result(self, key: str) -> InstitutionResult:
+        o = self.overrides[key]
+        return InstitutionResult(tier=o["tier"], status="listed", review=False, source="editorial override",
+                                 matched_name=o["name"], match_score=100.0, method="editorial override",
+                                 certainty="high", reason="editorial override")
 
     def _seed_result(self, key: str, method: str, score: float) -> InstitutionResult:
         return InstitutionResult(tier=self.seed_tier, status="listed", review=False, source="global_seed",
                                  matched_name=self.seed[key], match_score=round(score, 1), method=method,
                                  certainty="high" if method in ("alias", "exact") else "medium", reason="ok")
 
-    def _one(self, text: str, context: str | None = None) -> InstitutionResult:
+    def _one(self, text: str, context: str | None = None, counted: list[str] | None = None,
+             field_name: str | None = None) -> InstitutionResult:
         """One string; context (the whole string, when text is one comma-separated part) is what a
         campus is looked for in."""
         context = context or text
+        counted = counted if counted is not None else self.counted_categories(None)
         forms = self.forms(text)
+        for _method, key in forms:
+            if key in self.overrides:
+                return self._override_result(key)
         for method, key in forms:
             if key in self.by_name:
-                return self._nirf_result(self.by_name[key], method, 100.0, context)
+                return self._nirf_result(self.by_name[key], method, 100.0, context, counted, field_name)
         for method, key in forms:
             if key in self.seed:
                 return self._seed_result(key, method, 100.0)
         keys = list(dict.fromkeys(k for _, k in forms))
         fr = self.nirf_matcher.match(keys)
         if fr.key is not None:
-            return self._nirf_result(self.by_name[fr.key], "fuzzy", fr.score, context)
+            return self._nirf_result(self.by_name[fr.key], "fuzzy", fr.score, context, counted, field_name)
         fs = self.seed_matcher.match(keys)
         if fs.key is not None:
             return self._seed_result(fs.key, "fuzzy", fs.score)
@@ -295,18 +355,22 @@ class InstitutionIndex:
                 return InstitutionResult(reason=r)
         return InstitutionResult(reason="not_listed")
 
-    def tier(self, text: str) -> dict:
-        """The tier result for one institution string, as a dict (see the module docstring)."""
+    def tier(self, text: str, field_name: str | None = None) -> dict:
+        """The tier result for one institution string, as a dict (see the module docstring). With
+        a role field, the NIRF discipline categories of that field count too."""
+        counted = self.counted_categories(field_name)
         if not str(text or "").strip():
-            return InstitutionResult(reason="no_institution").as_dict()
-        res = self._one(text)
+            return InstitutionResult(reason="no_institution", field=field_name).as_dict()
+        res = self._one(text, None, counted, field_name)
         if res.method is None and "," in text:
             for part in (p.strip() for p in text.split(",")):
                 if part:
-                    alt = self._one(part, text)
+                    alt = self._one(part, text, counted, field_name)
                     if alt.method is not None:
                         alt.from_part = True
-                        return alt.as_dict()
+                        res = alt
+                        break
+        res.field, res.counted_categories = field_name, list(counted)
         return res.as_dict()
 
 

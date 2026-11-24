@@ -1,5 +1,5 @@
 {
-  "_comment": "Aliases for the institution tier lookups (src/shortlisting/tiers/institutions.py): abbreviations, short forms and former names -> the name as written in NIRF (or in config/institution_global_seed.json). 'patterns' expand the usual short forms of the national institute systems ('IIT <city>' -> 'Indian Institute of Technology <city>'); an entry in 'aliases' wins over a pattern. 'city_synonyms' are tried both ways. 'abbreviations' work like config/venue_abbreviations.json. A small editable seed list for India.",
+  "_comment": "Aliases for the institution tier lookups (src/shortlisting/tiers/institutions.py): abbreviations, short forms and former names -> the name as written in NIRF (or in config/institution_global_seed.json). 'patterns' expand the usual short forms of the national institute systems ('IIT <city>' -> 'Indian Institute of Technology <city>'); an entry in 'aliases' wins over a pattern. 'city_synonyms' are tried both ways. 'abbreviations' work like config/venue_abbreviations.json. A small editable seed list for India. 'SRM University' alone is not an alias: it also names SRM University-AP and SRM University Sonepat.",
   "abbreviations": {
     "always": {
       "univ": "university",
@@ -140,7 +140,6 @@
     "NALSAR": "Nalsar University of Law",
     "NLU Delhi": "National Law University",
     "VIT Vellore": "Vellore Institute of Technology",
-    "SRM University": "SRM Institute of Science and Technology",
     "MAHE": "Manipal Academy of Higher Education-Manipal",
     "Manipal University": "Manipal Academy of Higher Education-Manipal",
     "Amrita University": "Amrita Vishwa Vidyapeetham",
@@ -150,11 +149,10 @@
     "UDCT Mumbai": "Institute of Chemical Technology",
     "IACS Kolkata": "Indian Association for the Cultivation of Science",
     "JNCASR": "Jawaharlal Nehru Centre for Advanced Scientific Research",
-    "DA-IICT": "Dhirubhai Ambani University",
-    "DAIICT": "Dhirubhai Ambani University",
-    "DA IICT": "Dhirubhai Ambani University",
-    "Dhirubhai Ambani Institute of Information and Communication Technology": "Dhirubhai Ambani University",
-    "DAU": "Dhirubhai Ambani University",
+    "DA-IICT": "Dhirubhai Ambani Institute of Information and Communication Technology",
+    "DAIICT": "Dhirubhai Ambani Institute of Information and Communication Technology",
+    "DA IICT": "Dhirubhai Ambani Institute of Information and Communication Technology",
+    "DAU": "Dhirubhai Ambani Institute of Information and Communication Technology",
     "IIEST Shibpur": "Indian Institute of Engineering Science and Technology, Shibpur",
     "BESU Shibpur": "Indian Institute of Engineering Science and Technology, Shibpur",
     "Bengal Engineering and Science University": "Indian Institute of Engineering Science and Technology, Shibpur",
@@ -167,6 +165,13 @@
     "VNIT Nagpur": "Visvesvaraya National Institute of Technology, Nagpur",
     "SVNIT Surat": "Sardar Vallabhbhai National Institute of Technology",
     "University of Calcutta": "Calcutta University",
-    "University of Mumbai": "Mumbai University"
+    "University of Mumbai": "Mumbai University",
+    "Dhirubhai Ambani University": "Dhirubhai Ambani Institute of Information and Communication Technology",
+    "Dhirubhai Ambani University Gandhinagar": "Dhirubhai Ambani Institute of Information and Communication Technology",
+    "SRM Institute of Science and Technology": "S.R.M. Institute of Science and Technology",
+    "SRMIST": "S.R.M. Institute of Science and Technology",
+    "SRM IST": "S.R.M. Institute of Science and Technology",
+    "SRM University Chennai": "S.R.M. Institute of Science and Technology",
+    "SRM University Kattankulathur": "S.R.M. Institute of Science and Technology"
   }
 }

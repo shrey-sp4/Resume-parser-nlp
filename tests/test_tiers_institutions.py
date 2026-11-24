@@ -9,6 +9,7 @@ import json
 import pytest
 
 from resume_parser.schema import load_config
+from shortlisting.tiers import institutions as inst_mod
 from shortlisting.tiers.institutions import InstitutionIndex, load_nirf, parse_nirf_page
 
 INCLUDED = load_config("tiers.json")["nirf"]["categories_included"]
@@ -41,7 +42,7 @@ PAGES = {
         ("IR-O-U-0002", "Toyland University", "Toytown", "Toy Pradesh", 25),
         ("IR-O-U-0003", "Imaginary Institute of Technology Toyland", "Toyland", "Toy Pradesh", 26),
         ("IR-O-U-0004", "Pretend Institute of Science", "Pretendpur", "Pretend Nadu", 100),
-        ("IR-O-U-0005", "Dhirubhai Ambani University", "Gandhinagar", "Gujarat", 90),
+        ("IR-O-U-0005", "S.R.M. Institute of Science and Technology", "Chennai", "Tamil Nadu", 22),
         ("IR-O-I-0006", "Imaginary School of Mines", "Minetown", "Toy Pradesh", 60),
     ], repeat_long_rows=True),
     "OverallRanking150": band_page("Overall", "101-150", [("Fictional College of Arts", "Artville", "Toy Pradesh")]),
@@ -49,7 +50,9 @@ PAGES = {
     "EngineeringRanking": ranked_page("Engineering", [
         ("IR-E-U-0003", "Imaginary Institute of Technology Toyland", "Toyland", "Toy Pradesh", 12),
     ]),
-    "EngineeringRanking300": band_page("Engineering", "201-300", [("Faraway Institute of Engineering", "Farville", "Pretend Nadu")]),
+    "EngineeringRanking300": band_page("Engineering", "201-300", [("Faraway Institute of Engineering", "Farville", "Pretend Nadu"),
+                                                                ("Dhirubhai Ambani Institute of Information and Communication Technology",
+                                                                 "Gandhinagar", "Gujarat")]),
     "EngineeringRanking150": band_page("Engineering", "101-150", [("Pretend Institute of Science", "Pretendpur", "Pretend Nadu")]),
     "LawRanking": ranked_page("Law", [("IR-L-U-0007", "Make Believe Law School", "Lawtown", "Toy Pradesh", 30)]),
     "DentalRanking": ranked_page("Dental", [("IR-D-C-0008", "Toy Dental College", "Toytown", "Toy Pradesh", 20)]),
@@ -81,25 +84,27 @@ def test_page_parsing_ignores_nested_and_repeated_rows():
     assert [(b.rank_low, b.rank_label, b.nirf_id) for b in band] == [(101, "101-150", None)]
 
 
-@pytest.mark.parametrize("name, tier, rank", [
-    ("Toyland University, Toytown", "Tier 1", "25"),                       # 25: last of Tier 1
-    ("Imaginary Institute of Technology Toyland", "Tier 1", "12"),        # 26 Overall, but 12 in Engineering
-    ("Pretend Institute of Science", "Tier 2", "100"),                    # 100 beats its 101-150 band
-    ("Fictional College of Arts", "Tier 3", "101-150"),                   # a band counts at its lower bound
-    ("Toyland University, Toyburg, Pretend Nadu", "Tier 3", "151-200"),   # the other campus
-    ("Make Believe Law School", "Tier 2", "30"),                          # best of Law 30 and University 90
-    ("Toy Dental College", "Tier 1", "20"),
+@pytest.mark.parametrize("name, field, tier, rank, category", [
+    ("Toyland University, Toytown", None, "Tier 1", "25", "Overall"),                       # 25: last of Tier 1
+    ("Imaginary Institute of Technology Toyland", None, "Tier 2", "26", "Overall"),        # 26: first of Tier 2
+    ("Imaginary Institute of Technology Toyland", "software_networking", "Tier 1", "12", "Engineering"),
+    ("Pretend Institute of Science", "vlsi_embedded", "Tier 2", "100", "Overall"),        # 100 beats its 101-150 band
+    ("Fictional College of Arts", None, "Tier 3", "101-150", "Overall"),                   # a band counts at its lower bound
+    ("Toyland University, Toyburg, Pretend Nadu", None, "Tier 3", "151-200", "Overall"),   # the other campus
+    ("Make Believe Law School", None, "Tier 2", "90", "University"),                       # no field: Law does not count
+    ("Make Believe Law School", "law", "Tier 2", "30", "Law"),                             # Law field: Law 30 beats University 90
 ])
-def test_tier_boundaries_and_best_rank(index, name, tier, rank):
-    r = index.tier(name)
-    assert (r["tier"], r["best_rank_label"], r["status"], r["review"]) == (tier, rank, "listed", False)
+def test_tier_boundaries_and_best_rank(index, name, field, tier, rank, category):
+    r = index.tier(name, field)
+    assert (r["tier"], r["best_rank_label"], r["best_category"], r["status"], r["review"]) == (tier, rank, category, "listed", False)
 
 
 def test_boundary_26_and_beyond_200(index):
     r = index.tier("Imaginary School of Mines")
     assert (r["tier"], r["best_rank"]) == ("Tier 2", 60)
-    r = index.tier("Faraway Institute of Engineering")
+    r = index.tier("Faraway Institute of Engineering", "ai_ml_data_science")
     assert (r["tier"], r["status"], r["review"], r["reason"]) == (None, "unlisted", True, "ranked_beyond_200")
+    assert index.tier("Faraway Institute of Engineering")["reason"] == "no_rank_in_counted_categories"
     bands = [tuple(b) for b in load_config("tiers.json")["nirf"]["tier_bands"]]
     assert bands == [(1, 25, "Tier 1"), (26, 100, "Tier 2"), (101, 200, "Tier 3")]
     assert [index._tier_of(n) for n in (1, 25, 26, 100, 101, 200, 201)] == ["Tier 1", "Tier 1", "Tier 2", "Tier 2", "Tier 3", "Tier 3", None]
@@ -115,11 +120,17 @@ def test_aliases_patterns_and_the_city_column(index):
     for q in ("IIT Delhi", "IIT-Delhi", "Indian Institute of Technology, Delhi", "Dept. of Physics, IIT Delhi, New Delhi"):
         assert index.tier(q)["tier"] == "Tier 1", q
     assert index.tier("IIT Delhi")["method"] == "pattern"
-    r = index.tier("DA-IICT, Gandhinagar")  # a former name, through the alias table
-    assert (r["tier"], r["method"]) == ("Tier 2", "alias")
+    index.overrides = {}  # the NIRF rule on its own; the editorial override is tested below
+    for q in ("DA-IICT, Gandhinagar", "DAU", "Dhirubhai Ambani University"):  # NIRF lists the former name
+        r = index.tier(q, "ai_ml_data_science")
+        assert (r["method"], r["matched_name"], r["best_rank_label"], r["tier"], r["review"]) == (
+            "alias", "Dhirubhai Ambani Institute of Information and Communication Technology", "201-300", None, True), q
+    for q in ("SRMIST", "SRM Institute of Science and Technology"):  # NIRF writes S.R.M.
+        assert (index.tier(q)["tier"], index.tier(q)["method"]) == ("Tier 1", "alias"), q
+    assert index.tier("SRM University")["tier"] is None  # also names other SRM universities: not an alias
     assert index.tier("Imaginary School of Mines Minetown")["tier"] == "Tier 2"  # name plus the city column
     r = index.tier("Department of Toys, Imaginary Institute of Technology Toyland, Toyland")
-    assert (r["tier"], r["from_part"]) == ("Tier 1", True)
+    assert (r["tier"], r["from_part"]) == ("Tier 2", True)
 
 
 def test_campuses_need_a_city_or_agreeing_tiers(index):
@@ -130,7 +141,7 @@ def test_campuses_need_a_city_or_agreeing_tiers(index):
 
 def test_wrong_fuzzy_matches_are_refused(index):
     r = index.tier("Imaginary Institute of Technology Toylandd")  # a typo is accepted
-    assert (r["tier"], r["method"], r["certainty"]) == ("Tier 1", "fuzzy", "medium")
+    assert (r["tier"], r["method"], r["certainty"]) == ("Tier 2", "fuzzy", "medium")
     for q in ("Imaginary Institute of Technology Toytown",  # another city is another institute
               "Institute of Technology Imaginary Toyland",  # word order matters for institutions
               "Toy Dental Colleges of Pretendia"):
@@ -159,3 +170,80 @@ def test_seed_list_is_editorial_and_about_a_hundred():
     aliases = [a for s in seed["institutions"] for a in s["aliases"]]
     assert "MIT" not in aliases and "NTU" not in aliases  # forms that name more than one institution
     json.dumps(seed)
+
+
+# ---------------------------------------------------------------- field-aware categories
+
+
+def test_a_top25_dental_rank_is_not_tier1_for_a_computing_field(index):
+    r = index.tier("Toy Dental College", "ai_ml_data_science")
+    assert (r["tier"], r["status"], r["review"], r["reason"]) == (None, "unlisted", True, "no_rank_in_counted_categories")
+    assert r["categories"] == [{"category": "Dental", "rank": "20", "counted": False}]
+    assert r["counted_categories"] == ["Overall", "University", "College", "Research", "Engineering"]
+
+
+def test_a_top25_engineering_rank_is_tier1_for_an_engineering_field(index):
+    for field in ("ai_ml_data_science", "algorithms_theory", "communications_signal_processing", "software_networking", "vlsi_embedded"):
+        r = index.tier("Imaginary Institute of Technology Toyland", field)
+        assert (r["tier"], r["best_category"], r["best_rank"]) == ("Tier 1", "Engineering", 12), field
+    for field in ("physics_mathematical_sciences", "interdisciplinary", "economics"):
+        assert index.tier("Imaginary Institute of Technology Toyland", field)["best_category"] == "Overall", field
+
+
+def test_no_field_means_the_general_categories_only(index):
+    r = index.tier("Imaginary Institute of Technology Toyland")
+    assert (r["tier"], r["best_category"], r["field"]) == ("Tier 2", "Overall", None)
+    assert r["counted_categories"] == ["Overall", "University", "College", "Research"]
+    assert {c["category"]: c["counted"] for c in r["categories"]} == {"Engineering": False, "Overall": True}
+    assert index.tier("Toy Dental College")["tier"] is None
+
+
+def test_law_field_uses_law(index):
+    r = index.tier("Make Believe Law School", "law")
+    assert (r["tier"], r["best_category"], r["best_rank"]) == ("Tier 2", "Law", 30)
+    assert "Law" not in index.counted_categories("economics")
+
+
+def test_field_mapping_covers_every_role_field():
+    nirf = load_config("tiers.json")["nirf"]
+    assert set(nirf["field_categories"]) == set(load_config("venue_fields.json")["fields"])
+    assert set(nirf["always_counted"]) | set(nirf["discipline_categories"]) == set(nirf["categories_included"])
+    assert all(set(v) <= set(nirf["discipline_categories"]) for v in nirf["field_categories"].values())
+    assert nirf["field_categories"]["economics"] == ["Management"] and nirf["field_categories"]["interdisciplinary"] == []
+
+
+def test_an_unknown_field_is_an_error(index):
+    with pytest.raises(KeyError):
+        index.tier("Toyland University", "no_such_field")
+
+# ---------------------------------------------------------------- editorial overrides
+
+
+def test_dau_takes_the_editorial_override(index):
+    for q in ("DAU", "DA-IICT", "DA-IICT, Gandhinagar", "Dhirubhai Ambani University"):
+        for field in (None, "ai_ml_data_science", "law"):
+            r = index.tier(q, field)
+            assert (r["tier"], r["status"], r["review"]) == ("Tier 2", "listed", False), (q, field)
+            assert r["source"] == r["method"] == r["reason"] == "editorial override", q
+            assert r["best_rank"] is None  # not a NIRF rank
+
+
+def test_removing_the_override_file_returns_dau_to_unlisted(tmp_path, monkeypatch):
+    monkeypatch.setattr(inst_mod, "overrides_path", lambda: tmp_path / "no_such_file.json")
+    assert inst_mod.load_overrides() == {"overrides": []}
+    entries = [e for stem, html in PAGES.items() if not stem.endswith("ALL")
+               for e in parse_nirf_page(html, stem.replace("Ranking", "").rstrip("0123456789"))]
+    ix = InstitutionIndex(entries)
+    for q in ("DAU", "DA-IICT"):
+        r = ix.tier(q, "ai_ml_data_science")
+        assert (r["tier"], r["status"], r["review"], r["source"]) == (None, "unlisted", True, "nirf2025"), q
+
+
+def test_overrides_leave_srm_and_iacs_alone(index):
+    r = index.tier("SRMIST")
+    assert (r["tier"], r["source"], r["method"]) == ("Tier 1", "nirf2025", "alias")
+    r = index.tier("Indian Association for the Cultivation of Science")
+    assert (r["tier"], r["status"], r["source"]) == (None, "unlisted", None)
+    names = {o["name"] for o in load_config("institution_overrides.json")["overrides"]}
+    assert names == {"Dhirubhai Ambani University"}
+    assert all(o["source"] == "editorial override" for o in load_config("institution_overrides.json")["overrides"])

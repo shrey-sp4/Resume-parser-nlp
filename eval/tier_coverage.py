@@ -1,7 +1,8 @@
 """Coverage of the tier lookups on the development ground truth: counts only.
 
     python eval/tier_coverage.py                    venues and institutions
-    python eval/tier_coverage.py --field economics  venue tiers with that role field (config/venue_fields.json)
+    python eval/tier_coverage.py --field economics  venue and institution tiers for that role field
+                                                    (config/venue_fields.json, config/tiers.json nirf.field_categories)
 
 Development groups only (dev, tuned, dev2); validation, test_frozen, final and fresh are never read.
 Reads the GT publication venue and type fields (and, for institutions, the education and
@@ -32,7 +33,7 @@ from shortlisting.tiers.venues import load_index  # noqa: E402
 UNMATCHED_VENUES = "unmatched_venues.txt"
 UNMATCHED_INSTITUTIONS = "unmatched_institutions.txt"
 NO_TIER = {"no_match", "no_candidate", "short_name", "rejected_by_token_guard", "ambiguous_margin",
-           "ambiguous_duplicate_title", "ambiguous_acronym"}
+           "ambiguous_duplicate_title", "ambiguous_acronym", "ambiguous_prefix", "ambiguous_colon", "ambiguous_publisher"}
 
 
 def development_gt() -> list[dict]:
@@ -87,7 +88,7 @@ def print_venues(by_type: dict, n_resumes: int, field_name: str | None) -> None:
             continue
         print(f"    mapped to a tier: {tiered} of {wv} ({_pct(tiered, wv)})")
         print("    tiers:     " + ", ".join(f"{t} {c[f'tier {t}']} ({_pct(c[f'tier {t}'], wv).strip()})" for t in ("A", "B", "C", "unknown")))
-        print("    method:    " + ", ".join(f"{m} {c[f'method {m}']}" for m in ("issn", "exact", "title_alias", "acronym", "fuzzy", "none") if c[f"method {m}"]))
+        print("    method:    " + ", ".join(f"{m} {c[f'method {m}']}" for m in ("issn", "exact", "title_alias", "acronym", "fuzzy", "prefix", "colon", "publisher", "none") if c[f"method {m}"]))
         print("    certainty: " + ", ".join(f"{k} {c[f'certainty {k}']}" for k in ("high", "medium", "none") if c[f"certainty {k}"]))
         print(f"    matched on one comma-separated part: {c['from part']}")
         reasons = sorted((k[7:], v) for k, v in c.items() if k.startswith("reason ") and k != "reason ok")
@@ -96,7 +97,7 @@ def print_venues(by_type: dict, n_resumes: int, field_name: str | None) -> None:
             print(f"    out of field (best overall quartile used): {c['out of field']}")
 
 
-def institution_coverage(gts: list[dict]) -> tuple[dict, list[str]]:
+def institution_coverage(gts: list[dict], field_name: str | None = None) -> tuple[dict, list[str]]:
     """Education institutions and the institutions of academic experience entries (industry and
     other experience is counted, not tiered: NIRF and the seed list rank academic institutions)."""
     index = load_institution_index()
@@ -115,7 +116,7 @@ def institution_coverage(gts: list[dict]) -> tuple[dict, list[str]]:
             c["with institution"] += 1
             if kind not in ("education", "experience academic"):
                 continue
-            res = index.tier(inst)
+            res = index.tier(inst, field_name)
             c[f"tier {res['tier'] or 'none'}"] += 1
             c[f"status {res['status']}"] += 1
             c[f"source {res['source'] or 'none'}"] += 1
@@ -127,8 +128,9 @@ def institution_coverage(gts: list[dict]) -> tuple[dict, list[str]]:
     return by_kind, sorted(unmatched)
 
 
-def print_institutions(by_kind: dict, n_resumes: int) -> None:
-    print(f"\n=== INSTITUTION TIERS (development GT: {n_resumes} resumes; NIRF 2025 + global seed) ===")
+def print_institutions(by_kind: dict, n_resumes: int, field_name: str | None = None) -> None:
+    print(f"\n=== INSTITUTION TIERS (development GT: {n_resumes} resumes; NIRF 2025 + global seed; "
+          f"field: {field_name or 'none (general NIRF categories only)'}) ===")
     for kind in ("education", "experience academic", "experience industry", "experience other"):
         c = by_kind.get(kind)
         if not c:
@@ -142,7 +144,7 @@ def print_institutions(by_kind: dict, n_resumes: int) -> None:
         print(f"    mapped to a tier: {tiered} of {wi} ({_pct(tiered, wi)})")
         print("    tiers:   " + ", ".join(f"Tier {k} {c[f'tier Tier {k}']} ({_pct(c[f'tier Tier {k}'], wi).strip()})" for k in (1, 2, 3))
               + f", unlisted {c['status unlisted']}, ambiguous {c['status ambiguous']}  (unlisted and ambiguous: review)")
-        print("    source:  " + ", ".join(f"{s} {c[f'source {s}']}" for s in ("nirf2025", "global_seed") if c[f"source {s}"]))
+        print("    source:  " + ", ".join(f"{s} {c[f'source {s}']}" for s in ("nirf2025", "global_seed", "editorial override") if c[f"source {s}"]))
         print("    method:  " + ", ".join(f"{m} {c[f'method {m}']}" for m in ("alias", "pattern", "exact", "fuzzy", "none") if c[f"method {m}"]))
         print(f"    matched on one comma-separated part: {c['from part']}")
         reasons = sorted((k[7:], v) for k, v in c.items() if k.startswith("reason ") and k != "reason ok")
@@ -161,8 +163,8 @@ def main(argv: list[str] | None = None) -> int:
         common.write_text_inside(out, "".join(line + "\n" for line in unmatched))
         print(f"\n  {len(unmatched)} distinct unmatched journal/conference venue(s) written to "
               f"RESUME_DATA_DIR/reports/tiers/{UNMATCHED_VENUES} (not printed)")
-        by_kind, unlisted = institution_coverage(gts)
-        print_institutions(by_kind, len(gts))
+        by_kind, unlisted = institution_coverage(gts, a.field)
+        print_institutions(by_kind, len(gts), a.field)
         out = common.reports_dir() / "tiers" / UNMATCHED_INSTITUTIONS
         common.write_text_inside(out, "".join(line + "\n" for line in unlisted))
         print(f"\n  {len(unlisted)} distinct institution(s) with no tier written to "

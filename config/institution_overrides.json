@@ -1,0 +1,13 @@
+{
+  "_comment": "EDITORIAL OVERRIDES of the institution tier (src/shortlisting/tiers/institutions.py). An entry here wins over NIRF and the global seed list for every role field, and every result it gives says source 'editorial override'. Use sparingly and only by decision of the hiring committee; delete this file to return to the NIRF rule. Dhirubhai Ambani University is in NIRF 2025 only as its former name (Engineering 201-300), which the NIRF rule leaves unlisted.",
+  "overrides": [
+    {
+      "name": "Dhirubhai Ambani University",
+      "aliases": ["DAU", "DA-IICT", "DAIICT", "DA IICT", "Dhirubhai Ambani Institute of Information and Communication Technology",
+                  "Dhirubhai Ambani University Gandhinagar"],
+      "tier": "Tier 2",
+      "source": "editorial override",
+      "note": "Editorial decision; not a NIRF rank."
+    }
+  ]
+}

@@ -23,6 +23,11 @@ main conference whose title lacks that word.
 
 When the whole venue string finds nothing, each comma-separated part of at least two content words
 is tried on its own ("Name, City, Country"; "Journal, Publisher"), and the result says from_part.
+A journal that still finds nothing gets three more rules, in this order, each refused when it
+fits more than one title: prefix (a dotted abbreviation the table does not know, such as
+"Fict.", stands for a title word it begins; same number of words, in order), colon (the venue
+is the main title before a colon of one journal) and publisher (publisher words such as
+Elsevier or Springer dropped when 3+ content words remain). The method says which rule matched.
 
 Output per venue: tier, source, matched_title, match_score, method, categories, field,
 field_categories, out_of_field, quartile or core_rank, certainty (high: issn, exact, acronym;
@@ -40,7 +45,7 @@ from pathlib import Path
 
 from resume_parser.schema import load_config
 from shortlisting.tiers.lexicons import LexiconError, lexicon_file, tier_settings
-from shortlisting.tiers.text import FuzzyMatcher, content_tokens, normalise, variants
+from shortlisting.tiers.text import STOPWORDS, FuzzyMatcher, ascii_lower, content_tokens, normalise, variants
 
 _CAT = re.compile(r"^(.*?)(?:\s*\((Q[1-4])\))?$")
 _ISSN = re.compile(r"\b(\d{4})-?(\d{3}[\dXx])\b")
@@ -50,6 +55,8 @@ CONF_DROP = frozenset({"proceedings", "proc", "annual", "ieee", "acm", "cvf", "u
                        "lncs", "edition"})
 GENERIC_CONF_WORDS = frozenset({"international", "conference", "symposium", "workshop", "annual", "meeting", "joint",
                                 "national", "congress", "forum", "acm", "ieee"})
+PUBLISHER_WORDS = re.compile(r"\b(springer|elsevier|wiley|taylor|francis|sage|iop|aip|rsc|mdpi|hindawi|inderscience|emerald|igi|crc|"
+                             r"publishing|publications|publisher|press|online)\b", re.IGNORECASE)
 SATELLITE_WORDS = frozenset({"workshop", "workshops", "companion", "adjunct", "doctoral", "consortium", "tutorial",
                              "tutorials", "poster", "posters", "demo", "demos"})
 _ORDINAL = re.compile(r"^\d+(st|nd|rd|th)$")
@@ -188,6 +195,17 @@ class VenueIndex:
         self.journal_acronyms = {k.upper(): ckey(normalise(v)) for k, v in acr.get("journals", {}).items()}
         fuzzy = self.settings["venue_fuzzy"]
         self.journal_matcher = FuzzyMatcher(self.by_title, fuzzy)
+        # for the journal rules (prefix, colon, publisher), tried only when nothing else matched
+        self.journal_rules = bool(self.settings.get("journal_rules", True))
+        self.by_length: dict[int, list[str]] = {}
+        for key in self.by_title:
+            self.by_length.setdefault(len(key.split()), []).append(key)
+        self.by_main: dict[str, list[Journal]] = {}
+        for j in self.journals:
+            if ":" in j.title:
+                main = ckey(normalise(j.title.split(":")[0]))
+                if main and main not in self.by_title:
+                    self.by_main.setdefault(main, []).append(j)
 
         self.conferences = conferences
         self.conf_by_title: dict[str, list[Conference]] = {}
@@ -341,7 +359,95 @@ class VenueIndex:
                     if alt.method is not None:
                         alt.from_part = True
                         return alt.as_dict()
+        if entry_type == "journal" and res.method is None and self.journal_rules:
+            # only for a journal nothing above matched, so no earlier match can change
+            extra, refused = self.journal_rule_match(venue, field_name)
+            if extra is not None:
+                return extra.as_dict()
+            if refused:
+                res.reason = refused
         return res.as_dict()
+
+    # ---- the three journal rules, tried in this order when nothing else matched
+
+    def _prefix_tokens(self, venue: str) -> list[tuple[list[str], bool]]:
+        """Content tokens with their expansions, each marked: written as a dotted abbreviation that
+        the abbreviation table does not resolve?"""
+        always, with_stop = self.abbr.get("always", {}), self.abbr.get("with_stop", {})
+        s = _PAREN.sub(" ", ascii_lower(venue)).replace("&", " and ")
+        out = []
+        for tok in re.findall(r"[a-z0-9]+\.?", s):
+            word, dot = tok.rstrip("."), tok.endswith(".")
+            if word in STOPWORDS:
+                continue
+            exp = always.get(word) or (with_stop.get(word) if dot else None)
+            opts = [exp] if isinstance(exp, str) else list(exp) if exp else [word]
+            out.append((opts, dot and not exp))
+        return out
+
+    def prefix_rule(self, venue: str, field_name: str | None) -> tuple[VenueResult | None, str | None]:
+        """(a) A dotted abbreviation the table does not know stands for any title word it is a prefix
+        of (3+ characters); every other token must be equal; same number of content tokens, in
+        order; exactly one title."""
+        toks = self._prefix_tokens(venue)
+        if not any(dotted for _, dotted in toks):
+            return None, None
+        hits = []
+        for key in self.by_length.get(len(toks), []):
+            used = False
+            for (opts, dotted), word in zip(toks, key.split()):
+                if word in opts:
+                    continue
+                if dotted and any(len(a) >= 3 and not a.isdigit() and word.startswith(a) for a in opts):
+                    used = True
+                    continue
+                break
+            else:
+                if used:
+                    hits.append(key)
+        if not hits:
+            return None, None
+        if len(hits) > 1:
+            return None, "ambiguous_prefix"
+        return self._from_journals(self.by_title[hits[0]], "prefix", 100.0, field_name), None
+
+    def colon_rule(self, venue: str, field_name: str | None) -> tuple[VenueResult | None, str | None]:
+        """(b) The venue equals the main title before a colon ("Journal of X: Subtitle") of exactly
+        one journal title (that main title not being a full title itself)."""
+        forms = {ckey(f) for b in {venue, _PAREN.sub(" ", venue)} for f in variants(b, self.abbr)}
+        js = {id(j): j for f in forms for j in self.by_main.get(f, [])}
+        if not js:
+            return None, None
+        if len({j.title for j in js.values()}) > 1:
+            return None, "ambiguous_colon"
+        return self._from_journals(list(js.values()), "colon", 100.0, field_name), None
+
+    def publisher_rule(self, venue: str, field_name: str | None) -> tuple[VenueResult | None, str | None]:
+        """(c) Publisher words (Elsevier, Springer, ...) dropped, when 3+ content words remain, and
+        the rest matched by the usual methods (ISSN, exact, acronym, guarded fuzzy)."""
+        if not PUBLISHER_WORDS.search(venue):
+            return None, None
+        rest = " ".join(PUBLISHER_WORDS.sub(" ", venue).split())
+        if len(content_tokens(normalise(rest))) < 3:
+            return None, None
+        res = self.journal_tier(rest, field_name)
+        if res.reason.startswith("ambiguous"):  # fits more than one title: refused
+            return None, "ambiguous_publisher"
+        if res.method is None:
+            return None, None
+        res.method = "publisher"
+        res.certainty = "medium" if res.tier else "none"
+        return res, None
+
+    def journal_rule_match(self, venue: str, field_name: str | None) -> tuple[VenueResult | None, str | None]:
+        """The first of the three journal rules that matches, else (None, the first refusal)."""
+        refused = None
+        for rule in (self.prefix_rule, self.colon_rule, self.publisher_rule):
+            res, why = rule(venue, field_name)
+            if res is not None:
+                return res, None
+            refused = refused or why
+        return None, refused
 
     def _one(self, venue: str, entry_type: str, field_name: str | None) -> VenueResult:
         if entry_type == "journal":

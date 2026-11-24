@@ -973,16 +973,21 @@ compares GT-based and parser-based rankings on the development resumes (aggregat
 The only file that imports streamlit; all work is in `src/shortlisting/service.py`
 (`run_shortlist`: parse each PDF, cache the parser output by file hash, score, rank). The work
 folder is `RESUME_SHORTLIST_DIR`, else `RESUME_DATA_DIR/shortlist_runs`; a folder inside the repo
-is refused, and uploads, the cache and CSV exports stay there. Screens: CVs (a folder or an
-upload, with the count found), requirements (mode with one sentence each, field, minimum degree,
-experience kind and years only in experience mode, institution cutoff only in education mode,
-venue cutoff only in publications mode, keywords and synonyms, keyword suggestions from a pasted
-job ad), a run button with a progress bar, and results in four tabs (Shortlist, Review, Hold,
-Unreadable) with a table (rank, file, score, certainty, parser flag; Hold and Unreadable also
-show the reason in plain words, never "rejected" or "failed") and a card per candidate (value
-and certainty bars, evidence as entry numbers and tier labels, dropped components, the rank
-range, eligibility, any editorial override), the decision-support note, and a CSV export to the
-work folder. No name, gender, age, photo or nationality is shown or used.
+is refused, and uploads, the cache, saved requirements and CSV exports stay there. Everything a
+recruiter sees is in plain words: no parser codes, entry numbers, method names or internal
+reasons. Screens: CVs (a folder or an upload, with the count found), requirements (mode, field,
+minimum degree, experience kind and years only in experience mode, institution cutoff only in
+education mode, venue cutoff only in publications mode, keywords and synonyms with examples,
+keyword suggestions from a pasted job ad, save and load as JSON), a run button with live progress
+(one row per CV with its step; the steps are observed by wrapping the parser's own stage
+functions, passed to `run_pipeline` as its stage list, so the parser output is unchanged; stage 5
+reads education, experience and publications in one call, so they are one step), and results: a
+summary line, sort and minimum-score filter, four tabs (Shortlist, Review, Hold, Unreadable)
+with a table (rank, file, score, confidence, reason) and a card per CV (what was found for
+education, experience and publications, with institution and venue levels as Top, Good, Fair or
+Not listed; what is missing; the requirements), an Open CV button, a CSV download (a copy is
+saved in the work folder), one short decision-support note, and a confirmed Clear saved results
+button. No name, gender, age, photo or nationality is shown or used.
 
 ## 8. Repo layout
 

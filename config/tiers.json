@@ -1,0 +1,38 @@
+{
+  "_comment": "Settings of the tier lookups (src/shortlisting/tiers/). The lexicon files live outside the repo, in RESUME_LEXICON_DIR (default: RESUME_DATA_DIR/Lexicons), and are never committed. Fuzzy matching: rapidfuzz token_sort_ratio on normalised titles. On the SCImago 2025 list the most similar OTHER title of a journal scores 80 at the median, 90 at the 90th percentile and 96 at the 99th, so a score threshold alone cannot be safe: min_score 90 removes most neighbours and the token guard (every content token on each side aligned one to one: equal, abbreviation prefix of at least min_prefix characters, or per-token ratio of at least token_ratio for tokens of 6 or more characters; single letters and numbers equal only) removes the rest; a match also needs a lead of margin points over the second candidate that passes the guard. Names shorter than short_max_chars or with fewer than short_min_tokens content tokens are matched exactly (or by acronym) only.",
+  "lexicon_files": {
+    "scimago": "scimagojr 2025.csv",
+    "core": "core/ICORE2026.csv",
+    "nirf": "nirf_2025"
+  },
+  "nirf": {
+    "_comment": "NIRF 2025 ranking pages saved from nirfindia.org as HTML (one ranked page per category, plus its rank-band pages; the 'ALL' pages list participants, not ranks, and are never read). Tier = best NIRF rank over the included categories, a band counting at its lower bound: 1-25 Tier 1, 26-100 Tier 2, 101-200 Tier 3, anything else unlisted. Unlisted means review, never rejection. The excluded categories rank institutions only within a narrow group, so they stay off unless switched on here.",
+    "edition": "nirf2025",
+    "categories_included": ["Overall", "University", "College", "Research", "Engineering", "Management", "Pharmacy",
+                            "Medical", "Dental", "Law", "Architecture", "Agriculture"],
+    "categories_excluded": ["Innovation", "SDGInstitutions", "OPENUNIVERSITY", "SKILLUNIVERSITY", "STATEPUBLICUNIVERSITY"],
+    "tier_bands": [[1, 25, "Tier 1"], [26, 100, "Tier 2"], [101, 200, "Tier 3"]]
+  },
+  "institution_fuzzy": {
+    "_comment": "Institution names: order-sensitive rapidfuzz ratio on the content words (so 'Washington University' never meets 'University of Washington') and the token guard in order.",
+    "scorer": "ratio",
+    "ordered": true,
+    "min_score": 90,
+    "margin": 3,
+    "token_ratio": 85,
+    "min_prefix": 3,
+    "short_max_chars": 10,
+    "short_min_tokens": 2
+  },
+  "venue_fuzzy": {
+    "min_score": 90,
+    "margin": 3,
+    "token_ratio": 85,
+    "min_prefix": 3,
+    "short_max_chars": 15,
+    "short_min_tokens": 3
+  },
+  "scimago_journal_types": ["journal", "trade journal", "book series"],
+  "quartile_tier": {"Q1": "A", "Q2": "B", "Q3": "C", "Q4": "C"},
+  "core_rank_tier": {"A*": "A", "A": "A", "B": "B", "C": "C"}
+}

@@ -38,6 +38,22 @@ def test_allows_json_in_allowed_folders(tmp_path):
     assert find_problems(paths, tmp_path) == []
 
 
+def test_rejects_lexicon_files_and_large_csvs(tmp_path):
+    names = ["data/scimagojr 2025.csv", "core/ICORE2026.csv", "x/CORE2023.csv", "nirf_2025/OverallRanking.html",
+             "pages/EngineeringRanking150.html", "pages/LawRankingALL.html", "config/nirf_tables.json",
+             "dumps/ror-data.json", "dumps/openalex_institutions.txt"]
+    paths = [_make(tmp_path, n) for n in names]
+    problems = find_problems(paths, tmp_path)
+    assert sum("lexicon file" in p for p in problems) == len(names)
+    big = _make(tmp_path, "notes/list.csv", b"a,b\n" * 30000)
+    small = _make(tmp_path, "notes/small.csv", b"a,b\n")
+    assert find_problems([big, small], tmp_path) == [f"{big}: CSV larger than 100 KB (120000 bytes); lists belong in RESUME_LEXICON_DIR"]
+    # code, docs and ordinary names are not lexicons
+    ok = [_make(tmp_path, n) for n in ("src/shortlisting/tiers/institutions.py", "docs/nirf_notes.md", "notes/score2021.txt",
+                                       "config/tiers.json")]
+    assert find_problems(ok, tmp_path) == []
+
+
 def test_rejects_large_files(tmp_path):
     rel = _make(tmp_path, "big.txt", b"a" * (MAX_BYTES + 1))
     assert find_problems([rel], tmp_path) == [f"big.txt: larger than 1 MB ({MAX_BYTES + 1} bytes)"]

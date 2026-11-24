@@ -1,0 +1,172 @@
+{
+  "_comment": "Aliases for the institution tier lookups (src/shortlisting/tiers/institutions.py): abbreviations, short forms and former names -> the name as written in NIRF (or in config/institution_global_seed.json). 'patterns' expand the usual short forms of the national institute systems ('IIT <city>' -> 'Indian Institute of Technology <city>'); an entry in 'aliases' wins over a pattern. 'city_synonyms' are tried both ways. 'abbreviations' work like config/venue_abbreviations.json. A small editable seed list for India.",
+  "abbreviations": {
+    "always": {
+      "univ": "university",
+      "inst": "institute",
+      "instt": "institute",
+      "natl": "national",
+      "engg": "engineering",
+      "coll": "college",
+      "mgmt": "management",
+      "intl": "international",
+      "acad": "academy",
+      "technol": "technology",
+      "sci": [
+        "science",
+        "sciences"
+      ],
+      "res": "research",
+      "govt": "government"
+    },
+    "with_stop": {
+      "tech": "technology",
+      "eng": "engineering",
+      "edu": "education",
+      "st": "saint"
+    }
+  },
+  "patterns": [
+    {
+      "short": "iit",
+      "long": "indian institute of technology"
+    },
+    {
+      "short": "nit",
+      "long": "national institute of technology"
+    },
+    {
+      "short": "iim",
+      "long": "indian institute of management"
+    },
+    {
+      "short": "iiser",
+      "long": "indian institute of science education and research"
+    },
+    {
+      "short": "iiit",
+      "long": "indian institute of information technology"
+    },
+    {
+      "short": "aiims",
+      "long": "all india institute of medical sciences"
+    },
+    {
+      "short": "nlu",
+      "long": "national law university"
+    }
+  ],
+  "city_synonyms": [
+    [
+      "bombay",
+      "mumbai"
+    ],
+    [
+      "madras",
+      "chennai"
+    ],
+    [
+      "bangalore",
+      "bengaluru"
+    ],
+    [
+      "calcutta",
+      "kolkata"
+    ],
+    [
+      "poona",
+      "pune"
+    ],
+    [
+      "trichy",
+      "tiruchirappalli"
+    ],
+    [
+      "varanasi",
+      "bhu"
+    ],
+    [
+      "gauhati",
+      "guwahati"
+    ],
+    [
+      "baroda",
+      "vadodara"
+    ],
+    [
+      "mysore",
+      "mysuru"
+    ]
+  ],
+  "aliases": {
+    "IISc": "Indian Institute of Science",
+    "IISc Bangalore": "Indian Institute of Science",
+    "Indian Institute of Science Bangalore": "Indian Institute of Science",
+    "IIT BHU": "Indian Institute of Technology (Banaras Hindu University) Varanasi",
+    "IIT (BHU) Varanasi": "Indian Institute of Technology (Banaras Hindu University) Varanasi",
+    "IIT Varanasi": "Indian Institute of Technology (Banaras Hindu University) Varanasi",
+    "IIT Dhanbad": "Indian Institute of Technology (Indian School of Mines)",
+    "IIT (ISM) Dhanbad": "Indian Institute of Technology (Indian School of Mines)",
+    "ISM Dhanbad": "Indian Institute of Technology (Indian School of Mines)",
+    "Indian School of Mines": "Indian Institute of Technology (Indian School of Mines)",
+    "IIIT Hyderabad": "International Institute of Information Technology Hyderabad",
+    "IIIT-H": "International Institute of Information Technology Hyderabad",
+    "IIIT Bangalore": "International Institute of Information Technology Bangalore",
+    "IIIT-B": "International Institute of Information Technology Bangalore",
+    "IIIT Delhi": "Indraprastha Institute of Information Technology",
+    "IIIT-D": "Indraprastha Institute of Information Technology",
+    "BITS Pilani": "Birla Institute of Technology & Science -Pilani",
+    "Birla Institute of Technology and Science Pilani": "Birla Institute of Technology & Science -Pilani",
+    "JNU": "Jawaharlal Nehru University",
+    "Delhi University": "University of Delhi",
+    "BHU": "Banaras Hindu University",
+    "AMU": "Aligarh Muslim University",
+    "JMI": "Jamia Millia Islamia",
+    "Jamia Millia Islamia University": "Jamia Millia Islamia",
+    "Hyderabad University": "University of Hyderabad",
+    "HCU": "University of Hyderabad",
+    "Central University of Hyderabad": "University of Hyderabad",
+    "Pune University": "Savitribai Phule Pune University",
+    "University of Pune": "Savitribai Phule Pune University",
+    "Madras University": "University of Madras",
+    "Anna University Chennai": "Anna University",
+    "Jadavpur University Kolkata": "Jadavpur University",
+    "ISI Kolkata": "Indian Statistical Institute, Kolkata",
+    "ISI": "Indian Statistical Institute, Kolkata",
+    "TIFR": "Tata Institute of Fundamental Research",
+    "TISS": "Tata Institute of Social Sciences",
+    "NLSIU": "National Law School of India University",
+    "NLSIU Bangalore": "National Law School of India University",
+    "NALSAR": "Nalsar University of Law",
+    "NLU Delhi": "National Law University",
+    "VIT Vellore": "Vellore Institute of Technology",
+    "SRM University": "SRM Institute of Science and Technology",
+    "MAHE": "Manipal Academy of Higher Education-Manipal",
+    "Manipal University": "Manipal Academy of Higher Education-Manipal",
+    "Amrita University": "Amrita Vishwa Vidyapeetham",
+    "Thapar University": "Thapar Institute of Engineering and Technology (Deemed-to-be-university)",
+    "Thapar Institute of Engineering and Technology": "Thapar Institute of Engineering and Technology (Deemed-to-be-university)",
+    "ICT Mumbai": "Institute of Chemical Technology",
+    "UDCT Mumbai": "Institute of Chemical Technology",
+    "IACS Kolkata": "Indian Association for the Cultivation of Science",
+    "JNCASR": "Jawaharlal Nehru Centre for Advanced Scientific Research",
+    "DA-IICT": "Dhirubhai Ambani University",
+    "DAIICT": "Dhirubhai Ambani University",
+    "DA IICT": "Dhirubhai Ambani University",
+    "Dhirubhai Ambani Institute of Information and Communication Technology": "Dhirubhai Ambani University",
+    "DAU": "Dhirubhai Ambani University",
+    "IIEST Shibpur": "Indian Institute of Engineering Science and Technology, Shibpur",
+    "BESU Shibpur": "Indian Institute of Engineering Science and Technology, Shibpur",
+    "Bengal Engineering and Science University": "Indian Institute of Engineering Science and Technology, Shibpur",
+    "NIT Trichy": "National Institute of Technology Tiruchirappalli",
+    "NIT Surathkal": "National Institute of Technology Karnataka, Surathkal",
+    "NITK Surathkal": "National Institute of Technology Karnataka, Surathkal",
+    "NITK": "National Institute of Technology Karnataka, Surathkal",
+    "MNNIT Allahabad": "Motilal Nehru National Institute of Technology",
+    "MNIT Jaipur": "Malaviya National Institute of Technology",
+    "VNIT Nagpur": "Visvesvaraya National Institute of Technology, Nagpur",
+    "SVNIT Surat": "Sardar Vallabhbhai National Institute of Technology",
+    "University of Calcutta": "Calcutta University",
+    "University of Mumbai": "Mumbai University"
+  }
+}

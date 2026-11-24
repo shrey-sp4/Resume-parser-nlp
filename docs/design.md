@@ -821,6 +821,74 @@ year as equal tokens). `eval/pub_reader_loo.py` compares rules, learned and "lea
 confidence is at least t, else rules" with leave-one-resume-out over the development groups,
 judged with evaluate.py's rules. Models are written only to `RESUME_DATA_DIR/models/`.
 
+**Tier lookups for shortlisting (`src/shortlisting/tiers/`, rule-based, no learned or external
+service at run time).** The lexicons are public lists kept outside the repo, in
+`RESUME_LEXICON_DIR` (default `RESUME_DATA_DIR/Lexicons`; a folder inside the repo is refused): the
+SCImago journal list (`scimagojr 2025.csv`) and the ICORE conference export (`core/ICORE2026.csv`).
+The repo holds only the loaders, the rules, `config/tiers.json`, the field mapping and small
+hand-written seed lists.
+- Venue tier: A = SCImago Q1 or ICORE A*/A, B = Q2 or ICORE B, C = Q3/Q4 or ICORE C; anything
+  else is unknown, which is neutral (never low). Journal tiers only for entries typed journal
+  (SCImago rows typed journal, trade journal, book series), ICORE only for entries typed
+  conference, nothing for other types.
+- Matching: normalisation (ASCII, case, punctuation, "&", "the"), abbreviation expansion
+  (`config/venue_abbreviations.json`, ISO 4 style), lookup on content words (stop words dropped),
+  then ISSN, exact title, acronym (`config/venue_acronyms.json`; for conferences also ICORE's own
+  acronyms; a standalone token with two or more capitals), then fuzzy (rapidfuzz
+  token_sort_ratio at least 90). On SCImago 2025 the most similar other title of a journal scores
+  80 at the median, 90 at p90 and 96 at p99 (Physical Review A vs B: 94), so a score alone is not
+  safe: the token guard requires every content token to align one to one (equal, abbreviation
+  prefix, or a per-token ratio of 85 or more for long tokens; single letters and numbers equal
+  only), a fuzzy match needs a 3-point lead over the next guarded candidate, and names under 15
+  characters or 3 content words are never fuzzy-matched. Conference names lose years, ordinals,
+  "proceedings" and publisher words; an acronym ICORE lists twice is resolved by shared title
+  words; a workshop, companion, tutorial, poster or demo never takes its main conference's rank.
+  When the whole string finds nothing, each comma-separated part of two or more content words is
+  tried ("Name, City, Country").
+- Role field (`config/venue_fields.json`, 11 DAU areas, every name checked against the SCImago
+  list at load): the best quartile among the journal's categories in the field; when none is in
+  the field, the best overall quartile, marked `out_of_field`; with no field, the best overall.
+- Output per venue: tier, source, matched title, match score, method, categories, field
+  categories, out_of_field, quartile or ICORE rank, certainty (high: ISSN, exact, acronym; medium:
+  fuzzy; none) and a reason code for every unknown.
+- `eval/tier_coverage.py`: development GT only, counts only (share of venues with a tier, the
+  tier, method, certainty and reason distributions); the strings with no tier go to
+  `RESUME_DATA_DIR/reports/tiers/unmatched_venues.txt`, never printed. ICORE covers computer
+  science conferences only, so national and non-CS conferences stay unknown.
+- Institution tier (`institutions.py`), Indian institutions: the NIRF 2025 ranking pages saved as
+  HTML in `Lexicons/nirf_2025/` (a ranked page per category plus its rank-band pages; the "ALL"
+  pages list participants, not ranks, and are never read). Included categories (`config/tiers.json`):
+  Overall, University, College, Research, Engineering, Management, Pharmacy, Medical, Dental, Law,
+  Architecture, Agriculture; Innovation, SDG, Open, Skill and State Public University rank within
+  a narrow group and stay off unless switched on. One institution is joined across categories by
+  its NIRF ID (the part after the category letter); a band row joins the same name and state.
+  Tier = the best rank over its categories, a band counting at its lower bound: 1-25 Tier 1,
+  26-100 Tier 2, 101-200 Tier 3, else unlisted. A small category counts like any other (rank 20 in
+  Dental is Tier 1).
+- Other institutions: `config/institution_global_seed.json`, an editorial list of about 100
+  widely recognised non-Indian universities and schools (technical, economics, law, design), all
+  Tier 1. It is a seed for review, not a ranking, and not copied from any ranking. Every other
+  institution is unlisted. Unlisted and ambiguous mean review, never rejection (tier None,
+  `review` true).
+- Institution matching: abbreviations and aliases (`config/institution_aliases.json`: short forms,
+  former names such as DA-IICT for Dhirubhai Ambani University, the IIT/NIT/IIM/IISER/IIIT/AIIMS/NLU
+  patterns, city synonyms), the exact NIRF name (also with its city appended, as NIRF keeps the
+  city in its own column), the exact seed name, then fuzzy with an order-sensitive ratio (so
+  "Washington University" never meets "University of Washington") and the token guard in order.
+  Each comma-separated part is tried when the whole string finds nothing. A name NIRF lists for
+  several campuses needs a city or state in the string, or campuses of the same tier; otherwise it
+  is ambiguous. Short forms that name more than one institution in an Indian CV (MIT, NTU, DU,
+  VIT, BITS alone) are not aliases.
+- `eval/tier_coverage.py` also counts education institutions and the institutions of academic
+  experience (industry and other experience is counted, not tiered); institutions with no tier go
+  to `RESUME_DATA_DIR/reports/tiers/unmatched_institutions.txt`, never printed.
+- Licences: the lexicons are third-party data used locally (SCImago, ICORE: see their portals'
+  usage notes; NIRF: Government of India rankings, no reuse terms were found on the ranking
+  pages). They are never committed: `scripts/check_no_data.py` refuses lexicon file names
+  (SCImago, ICORE/CORE, NIRF ranking pages, ROR, OpenAlex) and any CSV over 100 KB. A global
+  ranking is not used; candidate free sources for later are ROR and OpenAlex (both CC0, metadata
+  only); ARWU, THE and CWUR reserve their rights, and the Leiden Open Edition states no licence.
+
 ## 8. Repo layout
 
 ```
@@ -840,6 +908,8 @@ resume-parser/
      learn/    pub_reader.py                    (experimental learned publication fields; not used by any stage)
   eval/     common.py  evaluate.py  funnel.py  calibrate_thresholds.py  end_to_end.py  pub_reader_loo.py  folds.py   (common.py: groups, IDs, validation and test_frozen guards)
             fresh.py   (the fresh set: layout check, the one run, dress rehearsal)
+            tier_coverage.py   (tier lookups on the development GT: counts only)
+  src/shortlisting/tiers/  lexicons.py  text.py  venues.py  institutions.py   (tier lookups; lexicons outside the repo)
   fixtures/ synthetic/   (fake resumes, built by a script)
   tests/    one test file per stage, plus determinism
   scripts/  check_no_data.py  make_synthetic_resumes.py
@@ -857,7 +927,8 @@ resume-parser/
 - Back it up somewhere private. Git will not have a copy.
 - Guards: `.gitignore`, a pre-commit hook and a CI check (`scripts/check_no_data.py`) that
   refuse PDFs, JSON outside `config/`, `schema/`, `fixtures/` and `docs/`, any file larger than
-  1 MB, and banned tool names in file paths or contents. Turn the hook on once per clone with
+  1 MB, any CSV larger than 100 KB, tier lexicon files by name, and banned tool names in file paths
+  or contents. The lexicons live in `RESUME_DATA_DIR/Lexicons` (or `RESUME_LEXICON_DIR`). Turn the hook on once per clone with
   `git config core.hooksPath .githooks`.
 - Output is written only under `RESUME_DATA_DIR`; the writer refuses any other folder.
 - Logs and test output show resume IDs, never names.

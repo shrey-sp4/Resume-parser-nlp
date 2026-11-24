@@ -3,7 +3,9 @@
 Checks every tracked and staged file:
 - no PDF files
 - no .json files outside config/, schema/, fixtures/, docs/
-- no file larger than 1 MB
+- no file larger than 1 MB, and no CSV larger than 100 KB
+- no tier lexicon file (SCImago, ICORE/CORE, NIRF pages, ROR, OpenAlex: by file name; code and
+  Markdown files are not lexicons)
 - no banned tool names in file paths or text contents (case-insensitive)
 - when RESUME_DATA_DIR is set: no resume ID or file stem of a guarded group (validation,
   test_frozen, from ground_truth_v2/_split.json) in file paths or text contents; the message
@@ -31,6 +33,10 @@ from pathlib import Path, PurePosixPath
 
 ALLOWED_JSON_DIRS = ("config", "schema", "fixtures", "docs")
 MAX_BYTES = 1024 * 1024
+MAX_CSV_BYTES = 100 * 1024
+# the tier lexicons (SCImago, ICORE, NIRF, ROR, OpenAlex) stay in RESUME_LEXICON_DIR, never here
+LEXICON_NAME = re.compile(r"scimago|nirf|(?<![a-z])i?core20\d\d|conf[-_]?ranks|ranking(\d+|all)?\.html?$|ror-data|openalex",
+                          re.IGNORECASE)
 BINARY_SNIFF = 8192
 
 # Built from parts so this file does not itself contain the banned words.
@@ -106,6 +112,8 @@ def find_problems(paths: list[str], root: Path, guarded: set[str] | frozenset = 
             problems.append(f"{rel}: JSON allowed only in {', '.join(ALLOWED_JSON_DIRS)}")
         if BANNED_PATTERN.search(rel):
             problems.append(f"{rel}: banned word in file path")
+        if LEXICON_NAME.search(posix.name) and suffix not in (".py", ".md"):
+            problems.append(f"{rel}: lexicon file (journal, conference or ranking list) is not allowed")
         if any(m in rel for m in guarded):
             problems.append(f"{rel}: guarded-group resume in file path")
 
@@ -116,6 +124,8 @@ def find_problems(paths: list[str], root: Path, guarded: set[str] | frozenset = 
         if size > MAX_BYTES:
             problems.append(f"{rel}: larger than 1 MB ({size} bytes)")
             continue
+        if suffix == ".csv" and size > MAX_CSV_BYTES:
+            problems.append(f"{rel}: CSV larger than 100 KB ({size} bytes); lists belong in RESUME_LEXICON_DIR")
         raw = full.read_bytes()
         if _is_binary(raw):
             continue

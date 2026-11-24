@@ -1,0 +1,77 @@
+{
+  "_comment": "Role field -> SCImago subject categories (and, optionally, whole SCImago Areas) for the venue tier lookups (src/shortlisting/tiers/venues.py). With a field selected, a journal's tier comes from its best quartile among these categories; when none of its categories is in the field, its best overall quartile is used and the result is marked out_of_field. Every name was checked against the SCImago 2025 list; the loader refuses a name the list does not have. Not in that list (so not used): 'Data Science', 'Design', 'Computational Biology'; 'Environmental Science', 'Health Professions' and 'Economics, Econometrics and Finance' are Areas, whose categories are named '... (miscellaneous)'.",
+  "fields": {
+    "ai_ml_data_science": {
+      "label": "AI/ML/Data Science",
+      "categories": ["Artificial Intelligence", "Computer Vision and Pattern Recognition", "Computer Science Applications",
+                     "Information Systems", "Statistics and Probability", "Statistics, Probability and Uncertainty",
+                     "Human-Computer Interaction"],
+      "areas": []
+    },
+    "algorithms_theory": {
+      "label": "Algorithms and Theory",
+      "categories": ["Theoretical Computer Science", "Computational Theory and Mathematics",
+                     "Discrete Mathematics and Combinatorics", "Logic", "Control and Optimization"],
+      "areas": []
+    },
+    "communications_signal_processing": {
+      "label": "Communications and Signal Processing",
+      "categories": ["Signal Processing", "Computer Networks and Communications", "Electrical and Electronic Engineering",
+                     "Media Technology", "Acoustics and Ultrasonics", "Instrumentation"],
+      "areas": []
+    },
+    "software_networking": {
+      "label": "Software and Networking",
+      "categories": ["Software", "Computer Networks and Communications", "Hardware and Architecture", "Information Systems",
+                     "Computer Science (miscellaneous)", "Computer Science Applications"],
+      "areas": []
+    },
+    "vlsi_embedded": {
+      "label": "VLSI and Embedded",
+      "categories": ["Hardware and Architecture", "Electrical and Electronic Engineering",
+                     "Electronic, Optical and Magnetic Materials", "Control and Systems Engineering", "Instrumentation"],
+      "areas": []
+    },
+    "physics_mathematical_sciences": {
+      "label": "Physics and Mathematical Sciences",
+      "categories": ["Applied Mathematics", "Analysis", "Algebra and Number Theory", "Geometry and Topology",
+                     "Numerical Analysis", "Computational Mathematics", "Mathematical Physics", "Mathematics (miscellaneous)",
+                     "Statistics and Probability", "Modeling and Simulation", "Atomic and Molecular Physics, and Optics",
+                     "Condensed Matter Physics", "Statistical and Nonlinear Physics", "Nuclear and High Energy Physics",
+                     "Astronomy and Astrophysics", "Physics and Astronomy (miscellaneous)"],
+      "areas": []
+    },
+    "humanities_social_sciences_design": {
+      "label": "Humanities, Social Sciences and Design",
+      "categories": ["Arts and Humanities (miscellaneous)", "Linguistics and Language", "Literature and Literary Theory",
+                     "Philosophy", "History", "Cultural Studies", "Communication", "Visual Arts and Performing Arts", "Music",
+                     "Architecture", "Sociology and Political Science", "Anthropology", "Education",
+                     "Social Sciences (miscellaneous)", "Human Factors and Ergonomics",
+                     "Computer Graphics and Computer-Aided Design", "Development", "Geography, Planning and Development"],
+      "areas": []
+    },
+    "agriculture_analytics": {
+      "label": "Agriculture Analytics",
+      "categories": ["Agronomy and Crop Science", "Soil Science", "Horticulture", "Plant Science", "Food Science",
+                     "Agricultural and Biological Sciences (miscellaneous)", "Computers in Earth Sciences", "Ecological Modeling"],
+      "areas": []
+    },
+    "law": {
+      "label": "Law",
+      "categories": ["Law", "Management, Monitoring, Policy and Law", "Political Science and International Relations"],
+      "areas": []
+    },
+    "economics": {
+      "label": "Economics",
+      "categories": ["Economics and Econometrics", "Finance", "Economics, Econometrics and Finance (miscellaneous)", "Accounting"],
+      "areas": []
+    },
+    "interdisciplinary": {
+      "label": "Interdisciplinary",
+      "categories": ["Environmental Science (miscellaneous)", "Health Professions (miscellaneous)", "Health Informatics",
+                     "Modeling and Simulation", "Genetics", "Molecular Biology", "Bioengineering",
+                     "Biochemistry, Genetics and Molecular Biology (miscellaneous)", "Multidisciplinary"],
+      "areas": []
+    }
+  }
+}

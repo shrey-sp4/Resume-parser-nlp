@@ -78,12 +78,23 @@ def test_no_data_is_unknown_never_zero():
     for resume in (cv(), {"experience": None}, {}, cv(("industry", ""), ("industry", "not a date"))):
         r = run(resume, tier=2)
         assert (r["status"], r["certainty"], r["years"], r["source"]) == ("unknown", "low", None, "none")
-    assert run(cv(), tier=2)["reason"] == "no_entries_of_type"  # reported, not read as zero
+    assert run(cv(), tier=2)["reason"] == "no_experience_entries"  # nothing at all: unknown
     assert run(cv(("industry", "")), tier=2)["reason"] == "no_usable_dates"
     # missing dates beside short dated jobs: not enough to say does_not_meet
     r = run(cv(("industry", "Jan 2020 - Dec 2020"), ("industry", "")), tier=5)
     assert (r["status"], r["years_fully_dated"], r["reason"]) == ("unknown", 1.0, "below_tier_with_missing_or_partial_dates")
     assert run(cv(("industry", "Jan 2015 - Dec 2020")), tier=5)["reason"] == "ok"
+
+
+def test_entries_of_another_type_only_give_a_low_certainty_does_not_meet():
+    for resume in (cv(("academic", "Jan 2010 - Dec 2020")), cv(("other", "Jan 2010 - Dec 2020")), cv(("academic", ""))):
+        r = run(resume, kind="industry", tier=2)
+        assert (r["status"], r["certainty"], r["reason"], r["years"]) == ("does_not_meet", "low", "no_entries_of_type", 0.0)
+    # a statement of the chosen type still counts
+    r = run(cv(("academic", "Jan 2010 - Dec 2020")), kind="industry", tier=5, text="6 years of industry experience")
+    assert (r["status"], r["source"]) == ("meets", "text_statement")
+    # no entries at all stays unknown
+    assert (run(cv(), kind="industry", tier=2)["status"]) == "unknown"
 
 
 @pytest.mark.parametrize("tier, start", [(2, 2020), (5, 2015), (10, 2010)])

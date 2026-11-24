@@ -932,6 +932,41 @@ experience" statement in the text, counted only when a word of the chosen type i
 never their text. `eval/experience_check.py` compares GT and parser results on the development
 resumes (counts only) with disagreement causes from the evaluator's entry pairing.
 
+Experience against a type with no entry of that type: when the resume lists experience of
+another type only (and no statement of the chosen type), the result is does_not_meet with
+certainty low and reason `no_entries_of_type`; with no experience entries at all it is unknown.
+
+**Shortlisting scorer (`src/shortlisting/`: profile, features, bm25, scorer, cli; settings in
+`config/shortlisting.json`, set before any held-out data was seen).** A requirement profile
+(mode default / education / experience / publications, role field, minimum degree level,
+experience kind and years tier, institution cutoff in education mode, venue cutoff in
+publications mode, keywords with synonyms, optional job-ad text turned into keywords by
+TF-IDF) drives four components, each a value 0..1 with a certainty, or unusable:
+- education: degree level fit, best institution tier (Tier 1 1.0, Tier 2 0.7, Tier 3 0.4;
+  unlisted is unusable, never low) and stream fit to the keywords;
+- experience: the calculator (meets 1.0, likely_meets 0.7, does_not_meet 0.1, unknown unusable);
+- publications: journal and conference entries, each venue tier (A 1.0, B 0.6, C 0.3,
+  unknown 0.4 with low certainty) times a recency weight (half-life 6 years), summed, divided by
+  a cap and capped at 1: presence, tier and recency, not exact counts (the parser over-detects);
+- topic fit: BM25 (written out) of the keywords against publication titles and venues, scaled by
+  the best in the pool; the whole text as a low-certainty fallback; dropped with no keywords.
+Weights per mode (education / experience / publications / topic fit): default 25/20/25/30,
+education 50/10/15/25, publications 15/10/45/30, experience 15/40/15/30. The score is the
+weighted mean over the usable components with the weights rescaled; the overall certainty is the
+usable weight share and the mean certainty. Eligibility (pass / fail / unknown): minimum degree,
+institution cutoff (education mode), venue cutoff (publications mode), experience tier
+(experience mode); unlisted institutions and unknown venues give unknown, never fail. Tiers:
+Unreadable (FAIL parse, listed apart), Hold (any eligibility fail, listed with the reason),
+Review (low certainty, an unusable key component, an unknown eligibility check, an editorial
+override or unlisted institution, or a NEEDS_REVIEW parse), Shortlist (score at least 0.6 with
+certainty at least medium), else Hold. Rank stability: 50 re-scorings (fixed seed) with 10% of
+entries dropped and 5% of types flipped give a rank range per candidate. The explanation card is
+data only (values, certainties, entry indices, tier labels, parser flag codes, dropped
+components). Features read only the education, experience and publications entries: never a
+name, gender, age, date of birth, photo or nationality field (a test checks it).
+`python -m shortlisting.cli` writes a ranked CSV outside the repo; `eval/shortlist_check.py`
+compares GT-based and parser-based rankings on the development resumes (aggregates only).
+
 ## 8. Repo layout
 
 ```

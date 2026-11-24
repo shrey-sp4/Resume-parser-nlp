@@ -32,10 +32,13 @@ resume text ("8 years of experience", "over 5 years of teaching experience"), co
 a word of the chosen type is near it; a statement with no type word has type unknown and gives
 status unknown. Source text_statement, certainty low.
 
+Entries of another type only (at least one experience entry, none of the chosen type, and no
+statement of the chosen type): does_not_meet, certainty low, reason no_entries_of_type. No
+experience entries at all (and no statement): unknown, reason no_experience_entries.
+
 The result lists the entries (index, type, counted, years, date_quality), never their text, and a
-reason: ok, no_entries_of_type (no entry of the chosen type: reported, not read as zero),
-no_usable_dates, below_tier_with_missing_or_partial_dates, text_statement or
-statement_type_not_chosen.
+reason: ok, no_experience_entries, no_entries_of_type, no_usable_dates,
+below_tier_with_missing_or_partial_dates, text_statement or statement_type_not_chosen.
 """
 
 from __future__ import annotations
@@ -193,7 +196,8 @@ def compute_experience(resume: dict, kind: str, tier: int, today: _dt.date | Non
               "entries_counted": len(counted), "entries_unknown_type": unknown_type,
               "years": None, "years_fully_dated": None, "years_with_partial": None,
               "status": "unknown", "certainty": "low", "source": "none",
-              "reason": "no_entries_of_type" if not counted else "no_usable_dates"}
+              "reason": "no_experience_entries" if not entries else
+                        ("no_entries_of_type" if not counted else "no_usable_dates")}
     if widest:
         years_full = merged_years(exact)
         years_any = merged_years(widest)
@@ -217,5 +221,10 @@ def compute_experience(resume: dict, kind: str, tier: int, today: _dt.date | Non
                 result["status"] = "likely_meets"
             else:
                 result["status"] = "does_not_meet"
-        result["certainty"] = "low"
+            result["certainty"] = "low"
+            return result
+    if entries and not counted:
+        # experience is listed, none of it of the chosen type: low-certainty does_not_meet
+        result.update(status="does_not_meet", certainty="low", source="entries", years=0.0,
+                      reason="no_entries_of_type")
     return result

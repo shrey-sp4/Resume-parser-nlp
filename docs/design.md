@@ -917,6 +917,21 @@ hand-written seed lists.
   ranking is not used; candidate free sources for later are ROR and OpenAlex (both CC0, metadata
   only); ARWU, THE and CWUR reserve their rights, and the Leiden Open Edition states no licence.
 
+**Experience calculator (`src/shortlisting/experience.py`).** Years of academic OR industry
+experience (the recruiter picks one; "other" counts as neither and is reported) against a tier of
+2, 5 or 10 years, from the parser's experience entries; the dates are read with the parser's own
+reader (`field_norm.parse_dates`), "Present"/"current" ends on `today` (a parameter). Intervals
+of the chosen type are merged before summing (overlaps count once), in calendar months. Status:
+meets (fully dated years reach the tier), likely_meets (only with partial dates read at their
+widest, or within 0.5 below the tier), does_not_meet (every entry fully dated and clearly below),
+unknown (no usable dates and no statement, or below the tier while dates are missing or partial).
+Missing data is never read as zero: a resume with no entry of the type is unknown with reason
+`no_entries_of_type`. Fallback, only without usable dates: a narrow "N years of (type)
+experience" statement in the text, counted only when a word of the chosen type is near; source
+`text_statement`, certainty low. The output lists entries by index, type, years and date quality,
+never their text. `eval/experience_check.py` compares GT and parser results on the development
+resumes (counts only) with disagreement causes from the evaluator's entry pairing.
+
 ## 8. Repo layout
 
 ```

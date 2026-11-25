@@ -977,13 +977,13 @@ is refused, and uploads, the cache and CSV exports stay there. Everything a recr
 plain words: no parser codes, entry numbers, method names or internal reasons, and no tooltips;
 Streamlit's default fonts. Screens: CVs (a folder or an upload, with the count found),
 requirements (mode, field, minimum degree, experience kind and years only in experience mode,
-institution cutoff only in education mode, venue cutoff only in publications mode, keywords and
-synonyms with examples), then the run: one status line ("Extract text and layout · CV 3 of 12")
-and a progress bar. The pipeline panel sits in the sidebar, so it stays in view: a dark vertical
+institution cutoff only in education mode, venue cutoff only in publications mode, keywords with an
+example; the UI has no synonyms box and passes none, though the profile still accepts them), then the run: one status line ("Extract text and layout · CV 3 of 12")
+and a progress bar. The pipeline panel sits in the sidebar under the heading Pipeline, so it stays in view: a dark vertical
 column of numbered boxes, one per step, joined by short lines. Steps 1 to 8 are the parser's own
 stages 0 to 7 from `default_stages()` (Check the PDF; Extract text and layout; Clean the text;
 Detect sections; Normalise sections; Extract details, with Education, Experience and
-Publications inside the one box because stage 5 reads them in one call; Validate and decide;
+Publications inside the one box because stage 5 reads them in one call; Validate;
 Build the output), observed at their boundaries by wrapping each stage function and passing
 the list to `run_pipeline` as its stage list, so the parser output is unchanged. Steps 9 to 12
 are ours: the rankings lookups (the scorer's own cached lookups), the experience years (the same
@@ -994,8 +994,10 @@ tiers show their counts. Our own four steps stay lit for at least `config/ui.jso
 `min_step_display_seconds` (0.6 s, cosmetic, 0 in the tests); parser stages are never delayed,
 so the fastest of them can pass between two screen updates. Results: a summary line, sort and
 minimum-score filter, four tabs with a table (Rank, CV, Score as a percentage, Based on N of 4
-areas, Reason) and a card per CV (area chips Found, None found, Not found or Not used, what was
-found, what is missing, the requirements), an Open CV
+areas, Reason; Based on is hidden when every CV has all four areas, and Reason in the Shortlist
+tab when every row has the same one) and a card per CV (area chips Found, None found, Not found
+or Not used; a score bar only for the areas counted in the score, one plain line for the others;
+what was found, what is missing, the requirements), an Open CV
 button, a CSV download (a copy is saved in the work folder), one short decision-support note,
 and a confirmed Clear saved results button. A CV held back by thin evidence says so in its
 reason ("High match, but Experience was not found. Please check the CV."). No name, gender, age,

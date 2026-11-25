@@ -118,10 +118,13 @@ def test_step_events_in_order_then_already_read(env, monkeypatch):
 def test_pipeline_boxes_are_the_parsers_real_stages_then_ours():
     from resume_parser.pipeline import default_stages
 
+    # box i+1 is the parser's stage i: the keys follow the pipeline's own stage order
     assert [k for k, _ in service.PARSER_STEPS] == [name for name, _ in default_stages()]  # stage0 ... stage7
+    assert [k for k, _ in service.PARSER_STEPS] == [f"stage{i}" for i in range(8)]
+    assert service.STEPS[6] == ("stage6", "Validate")  # box 7: display label only
     assert [n for _, n in service.STEPS] == [
         "Check the PDF", "Extract text and layout", "Clean the text", "Detect sections", "Normalise sections",
-        "Extract details", "Validate and decide", "Build the output",
+        "Extract details", "Validate", "Build the output",
         "Look up journal, conference and institution rankings", "Work out experience years", "Score",
         "Sort into Shortlist, Review, Hold, Unreadable"]
     panel = service.panel_html(None)
@@ -296,7 +299,8 @@ def test_tables_cards_summary_and_export_are_plain_and_hold_no_personal_fields(e
         assert path.parent == (run.work_dir / "exports") and not str(path).startswith(str(REPO_ROOT))
         rows = list(csv.DictReader(path.open(encoding="utf-8")))
         assert len(rows) == 3 and all(r["CV"].startswith(column) for r in rows)
-        assert list(rows[0]) == ["Tier", "Rank", "CV", "Score", "Based on", "Areas found", "Reason"]
+        assert list(rows[0]) == ["Tier", "Rank", "CV", "Score", "Based on", "Areas found", "Reason"]  # unchanged
+        assert list(rows[0]) == service.EXPORT_COLUMNS
         assert no_jargon(path.read_text(encoding="utf-8")) == []
 
 
@@ -334,6 +338,34 @@ def test_an_area_counted_with_none_in_the_cv_says_none_found():
     row = service.export_rows(run)[0]
     assert "Publications" in row["Areas found"].split(", ")
     assert "Experience" not in row["Areas found"]
+
+
+def test_a_card_has_no_bar_for_a_dropped_or_unused_area():
+    cand = Candidate("r_1", {"education": [{"degree": "D", "degree_level": "doctorate", "stream": "",
+                                            "institution": "Alpha University"}]}, "ACCEPT")
+    r = Shortlister(profile(keywords=""), FakeVenues(), FakeInstitutions()).score_pool([cand])[0]
+    r.update(rank=1, file_name="x.pdf", degrees=["Doctorate"])
+    status = dict(service.areas(r))
+    assert status["Experience"] == "Not found" and status["Topic match"] == "Not used"
+    comps = {c["name"]: c for c in service.card(r)["components"]}
+    for name in ("Experience", "Topic match"):  # one plain line: no bar, no percentage
+        assert not comps[name]["counted"] and comps[name]["value"] is None and comps[name]["score"] == ""
+        assert comps[name]["status"] == status[name]
+    for name in ("Education", "Publications"):  # counted in the score: a bar
+        assert comps[name]["counted"] and comps[name]["value"] is not None and "%" in comps[name]["score"]
+    assert service.based_on(r) == "2 of 4"
+    assert 'data-area="Experience" data-status="Not found"' in service.chips_html(r)
+
+
+def test_table_hides_columns_without_information():
+    row = lambda based, reason: {"Rank": 1, "CV": "a.pdf", "Score": "80%", "Based on": based, "Reason": reason}  # noqa: E731
+    same = [row("4 of 4", "Score above the shortlist mark")] * 3
+    assert service.table_columns(same, "Shortlist") == ["Rank", "CV", "Score"]
+    assert service.table_columns(same, "Review") == ["Rank", "CV", "Score", "Reason"]  # Review keeps its reasons
+    mixed = [row("4 of 4", "Score above the shortlist mark"), row("3 of 4", "Parts of the CV were hard to read")]
+    assert service.table_columns(mixed, "Shortlist") == ["Rank", "CV", "Score", "Based on", "Reason"]
+    assert service.table_columns([row("3 of 4", "x")], "Shortlist") == ["Rank", "CV", "Score", "Based on"]
+    assert service.table_columns([], "Hold")[:3] == ["Rank", "CV", "Score"]
 
 
 def test_plain_reasons_for_each_tier_reason():
@@ -424,7 +456,10 @@ def test_ui_smoke_on_three_synthetic_pdfs(env):
     assert at.title[0].value == "Candidate shortlisting"
     assert [r.label for r in at.radio][:2] == ["Choose your CV files", "What matters most?"]
     assert at.text_area(key="keywords").proto.placeholder == "machine learning, signal processing, deep learning"
-    assert at.text_area(key="synonyms").proto.placeholder == "machine learning: ML, deep learning"
+    assert [t.key for t in at.text_area] == ["keywords"]  # no synonyms box
+    assert "synonym" not in _ui_text(at).lower() and "synonym" not in APP.read_text(encoding="utf-8").replace(
+        '"synonyms": ""', "").lower()
+    assert "Pipeline" in [h.value for h in at.sidebar.header]  # the heading above the panel
     for kind in ("radio", "selectbox", "text_input", "text_area", "slider", "select_slider", "button"):
         for w in getattr(at, kind):  # no help tooltip anywhere
             assert not w.help, w.label
@@ -449,6 +484,11 @@ def test_ui_smoke_on_three_synthetic_pdfs(env):
     assert no_jargon(text) == [] and "%" in text
     assert not re.search(r"(^|\s)\?(\s|$)", text) and "rp-hint" not in text and "title=" not in text  # no ? hints
     assert all("✓" not in e.label for e in at.expander)  # no strip: the panel stays as it is
+    tables = [list(df.value.columns) for df in at.dataframe if "Requirement" not in df.value.columns]
+    assert tables  # each tier table shows only the columns with information
+    for tab_rows, cols in zip([r for t in service.TIERS[:3] if (r := run.by_tier.get(t))], tables):
+        assert cols == service.table_columns(service.table_rows(tab_rows), tab_rows[0]["tier"])
+        assert cols[:3] == ["Rank", "CV", "Score"] and set(cols) <= {"Rank", "CV", "Score", "Based on", "Reason"}
     final = next(m.value for m in at.sidebar.markdown if 'class="rp-panel"' in m.value)
     counts = {t: len(v) for t, v in run.by_tier.items()}
     assert states(final) == ["done"] * len(service.STEPS) and all(f"{t} {c}" in final for t, c in counts.items())

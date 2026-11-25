@@ -34,6 +34,7 @@ def html(text: str, where=st) -> None:
     where.markdown(text, unsafe_allow_html=True)
 
 
+st.sidebar.header("Pipeline")
 panel = st.sidebar.empty()
 
 # ---------------------------------------------------------------- 1. CVs
@@ -83,8 +84,6 @@ with c2:
 
 keywords = st.text_area("Topic keywords (comma separated)", key="keywords", height=70,
                         placeholder="machine learning, signal processing, deep learning")
-synonyms = st.text_area("Synonyms (one per line)", key="synonyms", height=70,
-                        placeholder="machine learning: ML, deep learning")
 
 # ---------------------------------------------------------------- 3. Run
 
@@ -100,7 +99,7 @@ if clicked:
         profile = service.build_profile({
             "mode": mode, "field": field_key, "min_degree_level": min_degree, "experience_kind": kind,
             "experience_years": years, "institution_tier_cutoff": inst_cut, "venue_tier_cutoff": venue_cut,
-            "keywords": keywords, "synonyms": synonyms})
+            "keywords": keywords, "synonyms": ""})
         paths = pdfs if source == FOLDER else service.save_uploads([(u.name, u.getvalue()) for u in uploads])
         board = service.StatusBoard(len(paths))
         html(service.panel_html(board), panel)
@@ -137,7 +136,7 @@ def show_card(r: dict) -> None:
     for comp in c["components"]:
         left, mid = st.columns([2, 5])
         left.write(f"**{comp['name']}**")
-        if comp["value"] is None:
+        if not comp["counted"]:  # not found or not used: one plain line, no bar
             mid.write(comp["status"])
         else:
             mid.progress(float(comp["value"]), text=comp["score"])
@@ -171,7 +170,9 @@ if run is not None:
                     with b:
                         open_button(run, r)
                 continue
-            st.dataframe(service.table_rows(rows), hide_index=True)
+            table = service.table_rows(rows)
+            cols = service.table_columns(table, tier)
+            st.dataframe([{c: row[c] for c in cols} for row in table], hide_index=True)
             for r in rows:
                 with st.expander(f"#{r['rank']} · {r['file_name']} · {service.percent(r['score'])}"):
                     show_card(r)

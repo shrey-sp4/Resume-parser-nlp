@@ -76,7 +76,7 @@ PARSER_STEPS = (
     ("stage3", "Detect sections"),           # section detection
     ("stage4", "Normalise sections"),        # the canonical document
     ("stage5", "Extract details"),           # education, experience and publications, in one call
-    ("stage6", "Validate and decide"),       # validation and scoring of the reading
+    ("stage6", "Validate"),       # validation and scoring of the reading (display label only)
     ("stage7", "Build the output"),          # the main JSON and sidecar
 )
 STAGE5_LINES = ("Education", "Experience", "Publications")
@@ -598,6 +598,21 @@ def table_rows(results: list[dict], label: str = "file_name") -> list[dict]:
              "Score": percent(r["score"]), "Based on": based_on(r), "Reason": reason_text(r)} for r in results]
 
 
+TABLE_KEEP = ("Rank", "CV", "Score")  # always shown
+
+
+def table_columns(rows: list[dict], tier: str) -> list[str]:
+    """The table columns that carry information for these rows: Rank, CV and Score always; Based on
+    unless every CV has all four areas; Reason unless, in the Shortlist tab, every row has the same
+    one (the tab already says why). The CSV export keeps every column."""
+    cols = list(TABLE_KEEP)
+    if any(r.get("Based on") != f"{len(AREAS)} of {len(AREAS)}" for r in rows):
+        cols.append("Based on")
+    if not (tier == "Shortlist" and len({r.get("Reason") for r in rows}) <= 1):
+        cols.append("Reason")
+    return cols
+
+
 def sort_and_filter(results: list[dict], sort_by: str = "score", min_score: float = 0.0) -> list[dict]:
     """sort_by 'score' (high first) or 'file' (A to Z); min_score in 0-1. CVs without a score are
     kept only when min_score is 0."""
@@ -637,8 +652,10 @@ def card(result: dict) -> dict:
             found.append("Venues: " + ", ".join(f"{VENUE_LABELS.get(t, NOT_LISTED)} {k}" for t, k in (ev.get("by_tier") or {}).items()))
         if (c["value"] is None or c["reason"] == "no_publication_entries") and MISSING_TEXT.get(c["reason"]):
             missing.append(MISSING_TEXT[c["reason"]])
-        comps.append({"name": AREAS.get(name, name), "status": status[AREAS[name]], "value": c["value"],
-                      "score": percent(c["value"]), "found": [f for f in found if f]})
+        counted = status[AREAS[name]] in COUNTED  # a bar only for areas the score is based on
+        comps.append({"name": AREAS.get(name, name), "status": status[AREAS[name]], "counted": counted,
+                      "value": c["value"] if counted else None, "score": percent(c["value"]) if counted else "",
+                      "found": [f for f in found if f]})
     reqs = []
     for k, v in result["eligibility"].items():
         req, why = _check_text(k, v)

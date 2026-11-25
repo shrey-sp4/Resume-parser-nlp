@@ -7,17 +7,19 @@ testable on its own.
         the path of each file (for the Open CV button).
 
 Progress: progress_callback(event) gets one dict per step event, in the order of STEPS:
-{"cv": k or None, "total": n, "file": name, "step": step, "state": "running" | "done"}.
-- The first four steps are the parser's own stage boundaries, observed by wrapping its stage
-  functions (resume_parser.pipeline.default_stages, passed to run_pipeline as its stage list): the
-  parser is unchanged and its output identical. Stage 5 reads education, experience and
-  publications in one call, so those three are one step. A CV read before gives one
-  {"state": "saved"} instead; a CV that could not be read gives {"state": "could_not_read"} and the
-  run continues.
-- Then, per CV, our own steps: the venue and institution lookups (they fill the scorer's own
+{"cv": k or None, "total": n, "file": name, "key": key, "step": name, "state": "running" | "done"}.
+- The first eight steps are the parser's own stages 0 to 7 (resume_parser.pipeline.default_stages,
+  keys stage0 ... stage7), observed at their boundaries by wrapping each stage function and
+  passing the wrapped list to run_pipeline as its stage list: the parser is unchanged and its
+  output identical. Stage 5 reads education, experience and publications in one call, so they
+  are one step. A CV read before gives one {"state": "saved"} instead; a CV that could not be
+  read gives {"state": "could_not_read"} and the run continues.
+- Then our own steps: per CV, the venue and institution lookups (they fill the scorer's own
   lookup cache, with the same calls the features make) and the experience years (the same
   calculator the scorer uses); then, for the pool (cv None), scoring and sorting into tiers (the
-  scorer's score_pool and its ranking, as Shortlister.rank without the stability runs).
+  scorer's score_pool and its ranking, as Shortlister.rank without the stability runs). Each of
+  these four is shown for at least config/ui.json min_step_display_seconds (cosmetic; parser
+  stages are never delayed).
 StatusBoard turns the events into the status line, the progress bar and the pipeline panel state.
 
 Everything shown to a recruiter is in plain words: no parser codes, entry numbers or internal
@@ -36,6 +38,7 @@ import io
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from functools import lru_cache
 from html import escape
@@ -60,35 +63,30 @@ VENUE_LABELS = {"A": "Top", "B": "Good", "C": "Fair"}
 NOT_LISTED = "Not listed"
 AREAS = {"education": "Education", "experience": "Experience", "publications": "Publications",
          "topic_fit": "Topic match"}
-WEIGHT_NAMES = {"education": "Education", "experience": "Experience", "publications": "Publications",
-                "topic_fit": "Topic"}
 
 NOTE = "Tiers are decision support. Please read the CV before deciding."
 UNREADABLE_TEXT = "We could not read this CV automatically. Please open it and review it manually."
 FOLDER_MISSING = "We could not find this folder. Please check the path."
 
-# (step, one-line description); the first four are parser stages
-READ_PDF, SECTIONS, ENTRIES, CHECKING = ("Reading the PDF", "Finding sections",
-                                         "Reading education, experience and publications", "Checking the reading")
-LOOKUPS, YEARS, SCORING, SORTING = ("Looking up journal, conference and institution rankings",
-                                    "Working out experience years", "Scoring", "Sorting into tiers")
-STEPS = (
-    (READ_PDF, "Takes the text out of each page"),
-    (SECTIONS, "Finds headings like Education and Experience"),
-    (ENTRIES, "Finds education, experience and publications"),
-    (CHECKING, "Checks the reading is complete"),
-    (LOOKUPS, "Matches venues and institutions to ranking lists"),
-    (YEARS, "Adds up years from the dates"),
-    (SCORING, "Weighs the areas for your mode"),
-    (SORTING, "Puts each CV into a tier"),
+# (key, short plain name): the parser's stages 0 to 7, keyed as in resume_parser.pipeline.default_stages
+PARSER_STEPS = (
+    ("stage0", "Check the PDF"),             # intake and triage
+    ("stage1", "Extract text and layout"),   # layout extraction
+    ("stage2", "Clean the text"),            # cleaning of the stage 1 lines
+    ("stage3", "Detect sections"),           # section detection
+    ("stage4", "Normalise sections"),        # the canonical document
+    ("stage5", "Extract details"),           # education, experience and publications, in one call
+    ("stage6", "Validate and decide"),       # validation and scoring of the reading
+    ("stage7", "Build the output"),          # the main JSON and sidecar
 )
-STEP_NAMES = tuple(s for s, _ in STEPS)
-SHORT_NAMES = ("Read", "Sections", "Details", "Check", "Rankings", "Years", "Score", "Tiers")
-PARSE_STEPS = ((READ_PDF, ("stage0", "stage1", "stage2")), (SECTIONS, ("stage3", "stage4")),
-               (ENTRIES, ("stage5",)), (CHECKING, ("stage6", "stage7")))
-INPUTS = (("Your CVs", "The PDF files you chose"), ("Your requirements", "Field, degree, mode and keywords"))
-TIER_TEXT = {"Shortlist": "Strong match with enough found", "Review": "Worth a closer look",
-             "Hold": "Not shortlisted for now", "Unreadable": "Please open and read by hand"}
+STAGE5_LINES = ("Education", "Experience", "Publications")
+LOOKUPS, YEARS, SCORING, SORTING = ("Look up journal, conference and institution rankings",
+                                    "Work out experience years", "Score",
+                                    "Sort into Shortlist, Review, Hold, Unreadable")
+OWN_STEPS = (("lookups", LOOKUPS), ("years", YEARS), ("score", SCORING), ("sort", SORTING))
+STEPS = PARSER_STEPS + OWN_STEPS
+STEP_KEYS = tuple(k for k, _ in STEPS)
+STEP_NAMES = tuple(n for _, n in STEPS)
 SAVED = "Already read (saved)"
 COULD_NOT_READ = "Could not read"
 
@@ -112,13 +110,11 @@ MISSING_TEXT = {
 EXPERIENCE_STATUS = {"meets": "meets the required years", "likely_meets": "probably meets the required years",
                      "does_not_meet": "below the required years", "unknown": "years could not be worked out"}
 
-HINTS = {
-    "Rank": "Position by score among all CVs",
-    "CV": "The file name of the CV",
-    "Score": "How well the CV matches your requirements",
-    "Based on": "How many of the four areas were found",
-    "Reason": "Why the CV is in this tier",
-}
+
+def step_display_seconds() -> float:
+    """config/ui.json min_step_display_seconds: the shortest time each of our own fast steps is
+    shown (cosmetic; the tests set it to 0)."""
+    return float(load_config("ui.json").get("min_step_display_seconds", 0))
 
 
 class ServiceError(RuntimeError):
@@ -286,19 +282,19 @@ class StatusBoard:
                 self.finished, self.done = True, set(range(len(STEPS)))
                 self.status = f"Done · {where}"
         elif state in ("saved", "could_not_read"):
-            self.active, self.done = None, set(range(len(PARSE_STEPS)))
-            self.units += len(PARSE_STEPS)
+            self.active, self.done = None, set(range(len(PARSER_STEPS)))
+            self.units += len(PARSER_STEPS)
             self.status = f"{SAVED if state == 'saved' else COULD_NOT_READ} · {where}"
 
     def bar(self) -> float:
-        total = self.total * (len(PARSE_STEPS) + 2) + 2
+        total = self.total * (len(PARSER_STEPS) + 2) + 2
         return min(1.0, self.units / total) if total else 1.0
 
     def box_states(self) -> list[str]:
-        """One of neutral, active, done, later per step."""
+        """One of waiting, active, done per step (all waiting before a run)."""
         if not self.started:
-            return ["neutral"] * len(STEPS)
-        return ["done" if i in self.done else "active" if i == self.active else "later" for i in range(len(STEPS))]
+            return ["waiting"] * len(STEPS)
+        return ["done" if i in self.done else "active" if i == self.active else "waiting" for i in range(len(STEPS))]
 
 
 # ---------------------------------------------------------------- the run
@@ -378,21 +374,19 @@ def run_shortlist(profile: RequirementProfile, pdf_paths: list[str | Path], work
     ids = _ids(pdfs)
     n = len(pdfs)
     emit = progress_callback or (lambda e: None)
+    pause = step_display_seconds()
     candidates, names, extra = [], {}, {}
-    step_of = {stage: (label, stages) for label, stages in PARSE_STEPS for stage in stages}
+    name_of = dict(STEPS)
     for k, (pdf, rid) in enumerate(zip(pdfs, ids), 1):
         base = {"cv": k, "total": n, "file": pdf.name}
         saved = read_saved(pdf, cache) is not None
         if saved:
-            emit({**base, "step": SAVED, "state": "saved"})
+            emit({**base, "key": "saved", "step": SAVED, "state": "saved"})
             main, sidecar, text = parse_cached(pdf, cache)
         else:
             def on_stage(stage, when, base=base):
-                label, stages = step_of[stage]
-                if when == "start" and stage == stages[0]:
-                    emit({**base, "step": label, "state": "running"})
-                elif when == "end" and stage == stages[-1]:
-                    emit({**base, "step": label, "state": "done"})
+                if stage in name_of:  # every parser stage is its own step; never delayed
+                    emit({**base, "key": stage, "step": name_of[stage], "state": "running" if when == "start" else "done"})
 
             main, sidecar, text = parse_cached(pdf, cache, on_stage)
         if sidecar is None:
@@ -401,32 +395,45 @@ def run_shortlist(profile: RequirementProfile, pdf_paths: list[str | Path], work
             decision = sidecar.get("decision")
             flags = sorted({f.get("code", "") for f in sidecar.get("flags") or [] if isinstance(f, dict)})
         if decision == "FAIL":
-            emit({**base, "step": COULD_NOT_READ, "state": "could_not_read"})
+            emit({**base, "key": "could_not_read", "step": COULD_NOT_READ, "state": "could_not_read"})
         candidates.append(Candidate(rid, main or {}, decision, flags, text))
         names[rid] = pdf.name
         extra[rid] = {"unreadable_reason": _unreadable_reason(sidecar) if decision == "FAIL" else "",
                       "degrees": _degrees(main or {})}
     venues, institutions = load_indexes()
     s = Shortlister(profile, venues, institutions, today=today)
-    for step, work_fn in ((LOOKUPS, lambda c: _look_up_rankings(s, safe_view(c.resume))),
-                          (YEARS, lambda c: compute_experience(safe_view(c.resume), profile.experience_kind,
-                                                               profile.experience_years, today=s.today, text=c.text))):
+    def hold(started: float) -> None:  # our own fast steps stay on screen at least `pause` seconds
+        left = pause - (time.monotonic() - started)
+        if left > 0:
+            time.sleep(left)
+
+    for key, step, work_fn in (("lookups", LOOKUPS, lambda c: _look_up_rankings(s, safe_view(c.resume))),
+                               ("years", YEARS, lambda c: compute_experience(
+                                   safe_view(c.resume), profile.experience_kind, profile.experience_years,
+                                   today=s.today, text=c.text))):
+        started = time.monotonic()
         for k, (pdf, cand) in enumerate(zip(pdfs, candidates), 1):
-            base = {"cv": k, "total": n, "file": pdf.name, "step": step}
+            base = {"cv": k, "total": n, "file": pdf.name, "key": key, "step": step}
             emit({**base, "state": "running"})
             work_fn(cand)
+            if k == n:
+                hold(started)
             emit({**base, "state": "done"})
     pool = {"cv": None, "total": n, "file": None}
-    emit({**pool, "step": SCORING, "state": "running"})
+    started = time.monotonic()
+    emit({**pool, "key": "score", "step": SCORING, "state": "running"})
     scored = s.score_pool(candidates)
-    emit({**pool, "step": SCORING, "state": "done"})
-    emit({**pool, "step": SORTING, "state": "running"})
+    hold(started)
+    emit({**pool, "key": "score", "step": SCORING, "state": "done"})
+    started = time.monotonic()
+    emit({**pool, "key": "sort", "step": SORTING, "state": "running"})
     results = _rank(s, scored)
     for r in results:
         r["file_name"] = names[r["resume_id"]]
         r.update(extra[r["resume_id"]])
     by_tier = {t: [r for r in results if r["tier"] == t] for t in TIERS}
-    emit({**pool, "step": SORTING, "state": "done"})
+    hold(started)
+    emit({**pool, "key": "sort", "step": SORTING, "state": "done"})
     return ShortlistRun(results, work, by_tier, {rid: pdf for rid, pdf in zip(ids, pdfs)}, profile.mode)
 
 
@@ -468,12 +475,6 @@ def build_profile(form: dict) -> RequirementProfile:
         institution_tier_cutoff=(form.get("institution_tier_cutoff") or None) if mode == "education" else None,
         venue_tier_cutoff=(form.get("venue_tier_cutoff") or None) if mode == "publications" else None,
         keywords=keywords, synonyms=synonyms)
-
-
-def weights_text(mode: str) -> str:
-    """The mode's weights from config, e.g. 'Education 25 · Experience 20 · Publications 25 · Topic 30'."""
-    w = load_config("shortlisting.json")["weights"][mode]
-    return " · ".join(f"{WEIGHT_NAMES[k]} {w[k]:g}" for k in WEIGHT_NAMES)
 
 
 # ---------------------------------------------------------------- presentation (plain words only)
@@ -676,91 +677,54 @@ def export_csv(run: ShortlistRun, label: str = "resume_id") -> Path:
     return path
 
 
-# ---------------------------------------------------------------- HTML (fonts, panel, tables, chips)
+# ---------------------------------------------------------------- HTML (pipeline panel, chips)
 
-HEADING_FONT = "Garamond, 'EB Garamond', Georgia, serif"
-TEXT_FONT = "'Times New Roman', Times, serif"
+# panel colours (its own dark background, whatever the page theme)
+PANEL_BG, PANEL_TEXT = "#151a23", "#e6e9ef"
+ACTIVE_BG, ACTIVE_TEXT, ACTIVE_GLOW = "#ffb000", "#111111", "rgba(255, 176, 0, 0.85)"
+DONE_BORDER, DONE_TEXT = "#3f6e4c", "#9cc9a7"
+WAITING_BORDER, WAITING_TEXT = "#4a5263", "#8b93a3"
 
 CSS = f"""<style>
-.stApp, .stApp p, .stApp li, .stApp label, .stApp input, .stApp textarea, .stApp button, .stApp td, .stApp th,
-.stApp span:not([data-testid="stIconMaterial"]), .stApp div, .stApp a, .stApp summary,
-.stApp [data-baseweb="tab"] p, .stApp [data-testid="stMarkdownContainer"] p,
-div[data-baseweb="popover"] li, div[data-baseweb="popover"] div, div[data-baseweb="tooltip"] div,
-[role="listbox"], [role="listbox"] *, [role="option"], [role="option"] *,
-[data-testid="stTooltipContent"] p {{ font-family: {TEXT_FONT} !important; }}
-.stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h1 span, .stApp h2 span, .stApp h3 span,
-.stApp h4 span {{ font-family: {HEADING_FONT} !important; }}
-.rp-panel {{ display: flex; flex-wrap: wrap; gap: 6px; align-items: stretch; margin: 4px 0 8px 0; }}
-.rp-box {{ border: 1px solid #b8b8b8; border-radius: 3px; padding: 6px 8px; min-width: 120px; max-width: 170px;
-  background: #ffffff; color: #222222; font-size: 0.85rem; line-height: 1.25; }}
-.rp-box .rp-name {{ font-weight: bold; }}
-.rp-box .rp-desc {{ font-size: 0.75rem; color: #555555; margin-top: 2px; }}
-.rp-box.rp-input, .rp-box.rp-tier {{ background: #fafafa; }}
-.rp-box.rp-active {{ border-color: #2f5d9b; background: #e9f0fa; animation: rp-pulse 1.4s ease-in-out infinite; }}
-.rp-box.rp-done {{ border-color: #5f8a66; }}
-.rp-box.rp-later {{ color: #9a9a9a; background: #f3f3f3; border-color: #d6d6d6; }}
-.rp-box.rp-later .rp-desc {{ color: #a8a8a8; }}
-.rp-arrow {{ align-self: center; color: #888888; }}
-@keyframes rp-pulse {{ 0%, 100% {{ box-shadow: 0 0 0 0 rgba(47, 93, 155, 0.35); }}
-  50% {{ box-shadow: 0 0 0 4px rgba(47, 93, 155, 0); }} }}
-.rp-table {{ border-collapse: collapse; width: 100%; font-size: 0.92rem; }}
-.rp-table th, .rp-table td {{ border-bottom: 1px solid #dddddd; text-align: left; padding: 4px 8px; vertical-align: top; }}
-.rp-table th {{ border-bottom: 1px solid #999999; }}
-.rp-hint {{ display: inline-block; border: 1px solid #999999; border-radius: 50%; width: 1.1em; height: 1.1em;
-  line-height: 1.05em; text-align: center; font-size: 0.7rem; color: #555555; cursor: help; margin-left: 3px; }}
+.rp-panel {{ background: {PANEL_BG}; color: {PANEL_TEXT}; padding: 10px 8px; border-radius: 6px; }}
+.rp-box {{ border: 1px solid {WAITING_BORDER}; color: {WAITING_TEXT}; background: {PANEL_BG}; border-radius: 4px;
+  padding: 3px 8px; font-size: 0.8rem; line-height: 1.3; }}
+.rp-box .rp-num {{ display: inline-block; min-width: 1.4em; opacity: 0.8; }}
+.rp-box .rp-sub {{ padding-left: 1.4em; font-size: 0.75rem; }}
+.rp-box.rp-done {{ border-color: {DONE_BORDER}; color: {DONE_TEXT}; }}
+.rp-box.rp-active {{ background: {ACTIVE_BG}; border-color: {ACTIVE_BG}; color: {ACTIVE_TEXT}; font-weight: bold;
+  box-shadow: 0 0 12px 3px {ACTIVE_GLOW}; animation: rp-pulse 1s ease-in-out infinite; }}
+.rp-link {{ width: 2px; height: 7px; margin: 0 auto; background: {WAITING_BORDER}; }}
+.rp-tiers {{ display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }}
+@keyframes rp-pulse {{ 0%, 100% {{ box-shadow: 0 0 6px 1px {ACTIVE_GLOW}; }} 50% {{ box-shadow: 0 0 16px 5px {ACTIVE_GLOW}; }} }}
 .rp-chip {{ display: inline-block; border: 1px solid #b8b8b8; border-radius: 3px; padding: 1px 6px; margin: 0 4px 2px 0;
   font-size: 0.82rem; }}
 .rp-chip.rp-found {{ border-color: #5f8a66; }}
-.rp-chip.rp-missing {{ color: #8a5a2b; border-color: #c9a27a; }}
 .rp-chip.rp-none {{ color: #8a5a2b; border-color: #b8b8b8; }}
+.rp-chip.rp-missing {{ color: #8a5a2b; border-color: #c9a27a; }}
 .rp-chip.rp-unused {{ color: #888888; }}
 </style>"""
 
 
-def _box(name: str, desc: str, kind: str, state: str, extra: str = "", index: int | None = None) -> str:
+def _box(number: str, name: str, state: str, index: int | None = None, lines: tuple = ()) -> str:
     tick = "✓ " if state == "done" else ""
     data = f' data-step="{index}"' if index is not None else ""
-    lines = f'<div class="rp-name">{tick}{escape(name)}</div><div class="rp-desc">{escape(desc)}</div>'
-    if extra:
-        lines += f'<div class="rp-desc">{escape(extra)}</div>'
-    return f'<div class="rp-box rp-{kind} rp-{state}" data-state="{state}"{data}>{lines}</div>'
+    sub = "".join(f'<div class="rp-sub">{escape(x)}</div>' for x in lines)
+    return (f'<div class="rp-box rp-{state}" data-state="{state}"{data}>'
+            f'<span class="rp-num">{escape(number)}</span>{tick}{escape(name)}{sub}</div>')
 
 
-def panel_html(board: StatusBoard | None, mode: str, counts: dict | None = None) -> str:
-    """The pipeline panel: inputs, the eight steps, the four tiers. Box states come from the board
-    (all neutral before a run)."""
-    states = board.box_states() if board is not None else ["neutral"] * len(STEPS)
-    in_state = "done" if board is not None and board.started else "neutral"
-    tier_state = "done" if board is not None and board.finished else ("later" if board is not None and board.started else "neutral")
-    parts = [_box(n, d, "input", in_state) for n, d in INPUTS]
-    for i, ((name, desc), state) in enumerate(zip(STEPS, states)):
-        parts.append(_box(name, desc, "step", state, weights_text(mode) if name == SCORING else "", i))
-    for t in TIERS:
-        label = f"{t} · {counts.get(t, 0)}" if counts is not None else t
-        parts.append(_box(label, TIER_TEXT[t], "tier", tier_state))
-    return '<div class="rp-panel">' + '<span class="rp-arrow">→</span>'.join(parts) + "</div>"
-
-
-def strip_text(board: StatusBoard) -> str:
-    """The one-line strip shown once the results are in."""
-    states = board.box_states()
-    return "  ·  ".join(("✓ " if s == "done" else "") + n for n, s in zip(SHORT_NAMES, states))
-
-
-def table_html(rows: list[dict], columns: list[str]) -> str:
-    """A results table with a ? hint on each header."""
-    head = "".join(f'<th>{escape(c)}<span class="rp-hint" title="{escape(HINTS.get(c, ""))}">?</span></th>' for c in columns)
-    body = "".join("<tr>" + "".join(f"<td>{escape(str(r.get(c, '')))}</td>" for c in columns) + "</tr>" for r in rows)
-    return f'<table class="rp-table"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>'
-
-
-def plain_table_html(rows: list[dict]) -> str:
-    if not rows:
-        return ""
-    cols = list(rows[0])
-    head = "".join(f"<th>{escape(c)}</th>" for c in cols)
-    body = "".join("<tr>" + "".join(f"<td>{escape(str(r[c]))}</td>" for c in cols) + "</tr>" for r in rows)
-    return f'<table class="rp-table"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>'
+def panel_html(board: StatusBoard | None, counts: dict | None = None) -> str:
+    """The pipeline panel: one box per step (number and name only), top to bottom, then the four
+    tiers (with their counts once the run is done). Box states come from the board."""
+    states = board.box_states() if board is not None else ["waiting"] * len(STEPS)
+    parts = [_box(f"{i + 1}", name, state, i, STAGE5_LINES if key == "stage5" else ())
+             for i, ((key, name), state) in enumerate(zip(STEPS, states))]
+    done = board is not None and board.finished
+    tiers = "".join(_box("", f"{t} {counts.get(t, 0)}" if done and counts is not None else t, "done" if done else "waiting")
+                    for t in TIERS)
+    return ('<div class="rp-panel">' + '<div class="rp-link"></div>'.join(parts)
+            + f'<div class="rp-link"></div><div class="rp-tiers">{tiers}</div></div>')
 
 
 def chips_html(result: dict) -> str:

@@ -20,13 +20,19 @@ from shortlisting.scorer import Candidate, Shortlister
 from test_shortlisting import FakeInstitutions, FakeVenues
 
 APP = REPO_ROOT / "app" / "streamlit_app.py"
-PARSE = [label for label, _ in service.PARSE_STEPS]
+PARSE = [name for _, name in service.PARSER_STEPS]
 # words about how the system works inside; none may reach the recruiter
 JARGON = ("parser", "flag", "entry", "entries", "stability", "rank range", "bm25", "tf-idf", "tfidf", "cache",
           "hash", "config", "editorial", "override", "certainty", "confidence", "no_entries_of_type", "needs_review",
           "low_score", "tier 1", "tier 2", "tier 3", "unlisted", "sidecar", "reject", "failed")
 REMOVED = ("suggest", "job_ad", "job ad", "advertisement", "saved requirements", "save_profile", "load_profile",
            "list_profiles", "profile_name", "profile_pick")
+
+
+@pytest.fixture(autouse=True)
+def no_display_delay(monkeypatch):
+    """The cosmetic minimum display time of our own steps is 0 in every test."""
+    monkeypatch.setattr(service, "step_display_seconds", lambda: 0.0)
 
 
 @pytest.fixture
@@ -48,7 +54,7 @@ def no_jargon(text: str) -> list[str]:
 
 
 def states(panel: str) -> list[str]:
-    """The state of each of the eight step boxes in a panel's HTML."""
+    """The state of each step box in a panel's HTML, in step order."""
     pairs = re.findall(r'data-state="(\w+)" data-step="(\d+)"', panel)
     assert len(pairs) == len(service.STEPS)
     return [s for s, _ in sorted(pairs, key=lambda p: int(p[1]))]
@@ -94,10 +100,6 @@ def test_step_events_in_order_then_already_read(env, monkeypatch):
     expected += [(None, s, st) for s in (service.SCORING, service.SORTING) for st in ("running", "done")]
     # a CV the parser marks unreadable adds its could-not-read event after its reading steps
     assert [x for x in seq if x[2] != "could_not_read"] == expected
-    assert [s for s, _ in service.STEPS] == [
-        "Reading the PDF", "Finding sections", "Reading education, experience and publications", "Checking the reading",
-        "Looking up journal, conference and institution rankings", "Working out experience years", "Scoring",
-        "Sorting into tiers"]
     assert sorted(p.stem for p in (run.work_dir / "cache").glob("*.json")) == sorted(service.file_hash(p) for p in pdfs)
 
     # a second run uses the saved readings and never runs the parser
@@ -110,31 +112,99 @@ def test_step_events_in_order_then_already_read(env, monkeypatch):
     assert {(e["step"], e["state"]) for e in first} <= {(service.SAVED, "saved"), (service.COULD_NOT_READ, "could_not_read")}
     board = service.StatusBoard(3)
     board.update(events2[0])
-    assert board.status == "Already read (saved) · CV 1 of 3" and board.box_states()[:4] == ["done"] * 4
+    assert board.status == "Already read (saved) · CV 1 of 3" and board.box_states()[:8] == ["done"] * 8
+
+
+def test_pipeline_boxes_are_the_parsers_real_stages_then_ours():
+    from resume_parser.pipeline import default_stages
+
+    assert [k for k, _ in service.PARSER_STEPS] == [name for name, _ in default_stages()]  # stage0 ... stage7
+    assert [n for _, n in service.STEPS] == [
+        "Check the PDF", "Extract text and layout", "Clean the text", "Detect sections", "Normalise sections",
+        "Extract details", "Validate and decide", "Build the output",
+        "Look up journal, conference and institution rankings", "Work out experience years", "Score",
+        "Sort into Shortlist, Review, Hold, Unreadable"]
+    panel = service.panel_html(None)
+    # number and name only; stage 5 holds its three lines in one box
+    boxes = re.findall(r'<div class="rp-box rp-\w+" data-state="\w+" data-step="(\d+)"><span class="rp-num">(\d+)</span>'
+                       r'([^<]*)((?:<div class="rp-sub">[^<]*</div>)*)</div>', panel)
+    assert [(int(i), int(num), name) for i, num, name, _ in boxes] == [
+        (i, i + 1, n) for i, (_, n) in enumerate(service.STEPS)]
+    assert [sub for *_, sub in boxes if sub] == [
+        '<div class="rp-sub">Education</div><div class="rp-sub">Experience</div><div class="rp-sub">Publications</div>']
+    assert boxes[5][2] == "Extract details"
+    assert panel.count('class="rp-link"') == len(service.STEPS)  # a line between boxes, then the tiers
 
 
 def test_status_line_bar_and_panel_state_per_event():
     board = service.StatusBoard(12)
-    assert states(service.panel_html(board, "default")) == ["neutral"] * 8
-    assert states(service.panel_html(None, "default")) == ["neutral"] * 8
-    board.update({"cv": 3, "total": 12, "file": "c.pdf", "step": service.READ_PDF, "state": "running"})
-    assert board.status == "Reading the PDF · CV 3 of 12"
-    assert states(service.panel_html(board, "default")) == ["active"] + ["later"] * 7
-    board.update({"cv": 3, "total": 12, "file": "c.pdf", "step": service.READ_PDF, "state": "done"})
-    board.update({"cv": 3, "total": 12, "file": "c.pdf", "step": service.SECTIONS, "state": "running"})
-    assert states(service.panel_html(board, "default")) == ["done", "active"] + ["later"] * 6
+    n = len(service.STEPS)
+    assert states(service.panel_html(board)) == ["waiting"] * n
+    assert states(service.panel_html(None)) == ["waiting"] * n
+
+    def ev(cv, i, state):
+        key, name = service.STEPS[i]
+        return {"cv": cv, "total": 12, "file": None, "key": key, "step": name, "state": state}
+
+    board.update(ev(3, 0, "running"))
+    assert board.status == "Check the PDF · CV 3 of 12"
+    assert states(service.panel_html(board)) == ["active"] + ["waiting"] * (n - 1)
+    board.update(ev(3, 0, "done"))
+    board.update(ev(3, 1, "running"))
+    assert states(service.panel_html(board)) == ["done", "active"] + ["waiting"] * (n - 2)
+    board.update(ev(3, 5, "running"))
+    panel = service.panel_html(board)
+    assert states(panel) == ["done"] * 5 + ["active"] + ["waiting"] * (n - 6)
+    assert re.search(r'data-state="active" data-step="5">.*?Education.*?Experience.*?Publications', panel)
     board.update({"cv": 4, "total": 12, "file": "d.pdf", "step": service.COULD_NOT_READ, "state": "could_not_read"})
     assert board.status == "Could not read · CV 4 of 12"
-    board.update({"cv": 5, "total": 12, "file": "e.pdf", "step": service.YEARS, "state": "running"})
-    assert states(service.panel_html(board, "default")) == ["done"] * 5 + ["active", "later", "later"]
-    board.update({"cv": None, "total": 12, "file": None, "step": service.SCORING, "state": "running"})
-    assert board.status == "Scoring · 12 CVs"
-    panel = service.panel_html(board, "default")
-    assert "rp-active" in panel and "Education 25 · Experience 20 · Publications 25 · Topic 30" in panel
-    board.update({"cv": None, "total": 12, "file": None, "step": service.SORTING, "state": "done"})
-    assert board.finished and states(service.panel_html(board, "default", {"Shortlist": 5})) == ["done"] * 8
-    assert service.strip_text(board).count("✓") == 8
-    assert 0 < board.bar() <= 1.0
+    assert states(service.panel_html(board)) == ["done"] * 8 + ["waiting"] * 4
+    board.update(ev(5, 9, "running"))
+    assert states(service.panel_html(board)) == ["done"] * 9 + ["active", "waiting", "waiting"]
+    board.update(ev(None, 10, "running"))
+    assert board.status == "Score · 12 CVs"
+    assert "✓" not in service.panel_html(board).split('data-step="10"')[1]  # nothing after the active box is ticked
+    board.update(ev(None, 11, "done"))
+    final = service.panel_html(board, {"Shortlist": 5, "Review": 4, "Hold": 2, "Unreadable": 1})
+    assert board.finished and states(final) == ["done"] * n and final.count("✓") == n + 4
+    assert all(f"{t} {c}" in final for t, c in (("Shortlist", 5), ("Review", 4), ("Hold", 2), ("Unreadable", 1)))
+    assert board.status == "Done · 12 CVs" and 0 < board.bar() <= 1.0
+
+
+def contrast(a: str, b: str) -> float:
+    def lum(h):
+        rgb = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        lin = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
+        return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+
+    hi, lo = sorted((lum(a), lum(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_panel_colours_make_active_waiting_and_done_obvious():
+    assert contrast(service.ACTIVE_BG, service.PANEL_BG) >= 7  # an active box against a waiting box
+    assert contrast(service.ACTIVE_TEXT, service.ACTIVE_BG) >= 7
+    assert contrast(service.PANEL_TEXT, service.PANEL_BG) >= 7
+    assert service.PANEL_BG.lower() not in ("#ffffff", "#fff")
+    assert "rp-pulse" in service.CSS and "box-shadow" in service.CSS
+
+
+def test_min_step_display_delay_is_zero_in_tests_and_set_in_config():
+    from resume_parser.schema import load_config
+
+    assert service.step_display_seconds() == 0.0
+    assert load_config("ui.json")["min_step_display_seconds"] == 0.6
+
+
+def test_our_steps_wait_for_the_display_time_but_parser_stages_never(env, monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(service, "step_display_seconds", lambda: 0.25)
+    monkeypatch.setattr(service.time, "sleep", lambda x: sleeps.append(x))
+    events = []
+    service.run_shortlist(profile(), service.find_pdfs(env["pdfs"]),
+                          progress_callback=lambda e: events.append((e["step"], len(sleeps))))
+    assert len(sleeps) == 4 and all(0 < x <= 0.25 for x in sleeps)  # rankings, years, score, sort
+    assert all(n == 0 for step, n in events if step in set(PARSE))  # no parser stage is ever held
 
 
 def test_a_crashed_cv_shows_could_not_read_and_the_run_continues(env, monkeypatch):
@@ -154,6 +224,7 @@ def test_a_crashed_cv_shows_could_not_read_and_the_run_continues(env, monkeypatc
     assert len(run.results) == 3
     assert [e["state"] for e in events if e["cv"] == 1 and e["step"] in PARSE + [service.COULD_NOT_READ]] == ["could_not_read"]
     assert any(e["cv"] == 2 and e["step"] == PARSE[-1] and e["state"] == "done" for e in events)
+    assert [e["key"] for e in events if e["cv"] == 2 and e["state"] == "running"][:8] == [f"stage{i}" for i in range(8)]
     crashed = next(r for r in run.results if r["file_name"] == pdfs[0].name)
     assert crashed["tier"] == "Unreadable"
     row = service.table_rows([crashed])[0]
@@ -215,7 +286,6 @@ def test_tables_cards_summary_and_export_are_plain_and_hold_no_personal_fields(e
         assert sorted(re.findall(r'data-area="([^"]+)" data-status="([^"]+)"', chips)) == sorted(c["areas"])
     blob = json.dumps([service.card(r) for r in run.results]) + json.dumps(service.table_rows(run.results))
     blob += "".join(service.chips_html(r) for r in run.results)
-    blob += service.table_html(service.table_rows(run.results), ["Rank", "CV", "Score", "Based on", "Reason"])
     assert no_jargon(blob) == []
     for key in set(FORBIDDEN_FIELDS) - {"name"}:  # "name" is also the card's own component label key
         assert f'"{key}"' not in blob
@@ -228,14 +298,6 @@ def test_tables_cards_summary_and_export_are_plain_and_hold_no_personal_fields(e
         assert len(rows) == 3 and all(r["CV"].startswith(column) for r in rows)
         assert list(rows[0]) == ["Tier", "Rank", "CV", "Score", "Based on", "Areas found", "Reason"]
         assert no_jargon(path.read_text(encoding="utf-8")) == []
-
-
-def test_table_headers_have_short_hints():
-    table = service.table_html([{"Rank": 1, "CV": "<x>.pdf", "Score": "87%", "Based on": "3 of 4", "Reason": "r"}],
-                               ["Rank", "CV", "Score", "Based on", "Reason"])
-    hints = re.findall(r'class="rp-hint" title="([^"]+)">\?<', table)
-    assert len(hints) == 5 and all(len(h.split()) <= 10 for h in hints)
-    assert "&lt;x&gt;.pdf" in table and "<x>" not in table
 
 
 def test_review_reason_names_the_missing_areas():
@@ -293,20 +355,13 @@ def test_sort_and_filter():
     assert [r["resume_id"] for r in service.sort_and_filter(rs, "score", 0.6)] == ["r_2"]
 
 
-def test_profile_from_the_form_and_weights_text():
+def test_profile_from_the_form():
     p = service.build_profile({"mode": "education", "institution_tier_cutoff": "Tier 2", "venue_tier_cutoff": "A",
                                "keywords": "quantum widgets, gadgets", "synonyms": "quantum widgets: qubit gadgets\nnoise"})
     assert (p.institution_tier_cutoff, p.venue_tier_cutoff) == ("Tier 2", None)  # each cutoff only in its own mode
     assert p.keywords == ["quantum widgets", "gadgets"] and p.synonyms == {"quantum widgets": ["qubit gadgets"]}
     assert service.build_profile({"mode": "experience", "experience_kind": "industry", "experience_years": "10"}).experience_years == 10
     assert service.field_options()[0] == (None, "Any field") and len(service.field_options()) == 12
-    assert service.weights_text("default") == "Education 25 · Experience 20 · Publications 25 · Topic 30"
-    assert service.weights_text("experience") == "Education 15 · Experience 40 · Publications 15 · Topic 30"
-
-
-def test_step_descriptions_are_short():
-    for _, desc in (*service.STEPS, *service.INPUTS, *service.TIER_TEXT.items()):
-        assert len(desc.split()) <= 8, desc
 
 
 def test_clear_saved_results_only_removes_saved_readings(env):
@@ -328,12 +383,12 @@ def test_editorial_override_is_in_plain_words_on_the_card(env):
     assert "Degrees: Doctorate" in edu["found"] and no_jargon(json.dumps(c)) == []
 
 
-def test_fonts_have_fallbacks_and_no_network():
-    assert "Garamond, 'EB Garamond', Georgia, serif" in service.CSS
-    assert "'Times New Roman', Times, serif" in service.CSS
-    text = APP.read_text(encoding="utf-8") + service.CSS
+def test_no_font_css_no_hints_and_no_network():
+    text = APP.read_text(encoding="utf-8") + (REPO_ROOT / "src/shortlisting/service.py").read_text(encoding="utf-8")
+    for word in ("Garamond", "Times New Roman", "font-family", "@font-face", "@import", "help=", "rp-hint", " title=",
+                 "HINTS"):
+        assert word not in text, word
     assert not re.search(r"https?://", text)
-    assert "@import" not in text and "@font-face" not in text
 
 
 def test_streamlit_is_imported_only_by_the_app():
@@ -348,7 +403,7 @@ def test_no_data_in_the_new_files():
 
 
 def _ui_text(at) -> str:
-    """Every piece of text the app shows: elements, widget labels, hints and options."""
+    """Every piece of text the app shows: elements, widget labels, help texts and options."""
     parts = []
     for kind in ("title", "header", "subheader", "markdown", "caption", "info", "warning", "error", "success",
                  "exception"):
@@ -370,12 +425,12 @@ def test_ui_smoke_on_three_synthetic_pdfs(env):
     assert [r.label for r in at.radio][:2] == ["Choose your CV files", "What matters most?"]
     assert at.text_area(key="keywords").proto.placeholder == "machine learning, signal processing, deep learning"
     assert at.text_area(key="synonyms").proto.placeholder == "machine learning: ML, deep learning"
-    for kind in ("radio", "selectbox", "text_input", "text_area", "slider", "select_slider"):
-        for w in getattr(at, kind):  # every input has a short hint
-            assert w.help and len(w.help.split()) <= 10, w.label
+    for kind in ("radio", "selectbox", "text_input", "text_area", "slider", "select_slider", "button"):
+        for w in getattr(at, kind):  # no help tooltip anywhere
+            assert not w.help, w.label
     assert [w for w in REMOVED if w in _ui_text(at).lower()] == []
-    panel = next(m.value for m in at.markdown if 'class="rp-panel"' in m.value)
-    assert states(panel) == ["neutral"] * 8 and "Your CVs" in panel and "Your requirements" in panel
+    panel = next(m.value for m in at.sidebar.markdown if 'class="rp-panel"' in m.value)  # the panel is in the sidebar
+    assert states(panel) == ["waiting"] * len(service.STEPS)
     assert at.button(key="run").disabled  # nothing chosen yet
     at.text_input(key="folder").input(str(env["tmp"] / "no such folder")).run()
     assert [e.value for e in at.error] == ["We could not find this folder. Please check the path."]
@@ -392,10 +447,11 @@ def test_ui_smoke_on_three_synthetic_pdfs(env):
     assert len(at.tabs) == 4 and sum(int(t.label.split("(")[1].rstrip(")")) for t in at.tabs) == 3
     assert [c.value for c in at.caption][-1] == service.NOTE
     assert no_jargon(text) == [] and "%" in text
-    strip = at.expander[0]
-    assert strip.label.count("✓") == 8
-    final = next(m.value for m in at.markdown if 'class="rp-panel"' in m.value)
-    assert states(final) == ["done"] * 8 and "Experience 40" in final
+    assert not re.search(r"(^|\s)\?(\s|$)", text) and "rp-hint" not in text and "title=" not in text  # no ? hints
+    assert all("✓" not in e.label for e in at.expander)  # no strip: the panel stays as it is
+    final = next(m.value for m in at.sidebar.markdown if 'class="rp-panel"' in m.value)
+    counts = {t: len(v) for t, v in run.by_tier.items()}
+    assert states(final) == ["done"] * len(service.STEPS) and all(f"{t} {c}" in final for t, c in counts.items())
 
     # the minimum-score filter
     at.slider(key="min_score").set_value(100).run()

@@ -3,10 +3,11 @@
     streamlit run app/streamlit_app.py
 
 All work is done by src/shortlisting/service.py; this file only draws the screens, in plain words
-for a recruiter. Runs locally: no network calls, no web fonts, no learned model. Files are read
-into the work folder (RESUME_SHORTLIST_DIR, else RESUME_DATA_DIR/shortlist_runs), never into the
-repo. The tables show the file name or the resume ID, the score, the areas found and the reason,
-never a name, gender, age, photo or nationality.
+for a recruiter. Runs locally: no network calls, no learned model. Files are read into the work
+folder (RESUME_SHORTLIST_DIR, else RESUME_DATA_DIR/shortlist_runs), never into the repo. The
+tables show the file name or the resume ID, the score, the areas found and the reason, never a
+name, gender, age, photo or nationality. The pipeline panel sits in the sidebar so it stays in
+view while the page scrolls.
 """
 
 from __future__ import annotations
@@ -23,9 +24,8 @@ import streamlit as st  # noqa: E402
 from shortlisting import service  # noqa: E402
 
 FOLDER, UPLOAD = "Folder with PDF files", "Upload PDF files"
-TABLE_COLUMNS = ["Rank", "CV", "Score", "Based on", "Reason"]
 
-st.set_page_config(page_title="Candidate shortlisting", layout="wide")
+st.set_page_config(page_title="Candidate shortlisting", layout="wide", initial_sidebar_state="expanded")
 st.markdown(service.CSS, unsafe_allow_html=True)
 st.title("Candidate shortlisting")
 
@@ -34,16 +34,16 @@ def html(text: str, where=st) -> None:
     where.markdown(text, unsafe_allow_html=True)
 
 
+panel = st.sidebar.empty()
+
 # ---------------------------------------------------------------- 1. CVs
 
 st.header("1. CVs")
-source = st.radio("Choose your CV files", [FOLDER, UPLOAD], horizontal=True, key="source",
-                  help="Pick a folder on this computer or upload files.")
+source = st.radio("Choose your CV files", [FOLDER, UPLOAD], horizontal=True, key="source")
 pdfs: list[Path] = []
 uploads = []
 if source == FOLDER:
-    folder = st.text_input("Folder path", key="folder", placeholder=r"C:\Users\Priya\Desktop\CVs",
-                           help="The folder that holds the PDF CVs.")
+    folder = st.text_input("Folder path", key="folder", placeholder=r"C:\Users\Priya\Desktop\CVs")
     st.caption(r"Example — Windows: C:\Users\Priya\Desktop\CVs  ·  Mac: /Users/priya/Desktop/CVs")
     if folder:
         if not Path(folder).is_dir():
@@ -52,62 +52,48 @@ if source == FOLDER:
             pdfs = service.find_pdfs(folder)
             st.write(f"**{len(pdfs)}** PDF file(s) found.")
 else:
-    uploads = st.file_uploader("PDF files", type=["pdf"], accept_multiple_files=True, key="uploads",
-                               help="Choose one or more PDF CVs.") or []
+    uploads = st.file_uploader("PDF files", type=["pdf"], accept_multiple_files=True, key="uploads") or []
     st.write(f"**{len(uploads)}** PDF file(s) selected.")
 
 # ---------------------------------------------------------------- 2. Requirements
 
 st.header("2. Requirements")
 mode = st.radio("What matters most?", list(service.MODE_LABELS), format_func=service.MODE_LABELS.get,
-                horizontal=True, key="mode", help="Decides how much each area counts.")
+                horizontal=True, key="mode")
 c1, c2 = st.columns(2)
 kind, years, inst_cut, venue_cut = "academic", 5, None, None
 with c1:
     labels = dict(service.field_options())
-    field_key = st.selectbox("Field", list(labels), key="field", help="The subject area of the job.",
+    field_key = st.selectbox("Field", list(labels), key="field",
                              format_func=lambda v: "Any field (for example AI/ML/Data Science)" if v is None else labels[v])
     min_degree = st.selectbox("Minimum degree", [None, *service.DEGREE_LABELS], key="min_degree",
-                              help="CVs below this degree are held.",
                               format_func=lambda v: "No minimum (for example Masters)" if v is None else service.DEGREE_LABELS[v])
 with c2:
     if mode == "experience":
         kind = st.radio("Experience kind", ["academic", "industry"], format_func=str.capitalize, horizontal=True,
-                        key="kind", help="Which kind of experience counts.")
-        years = st.select_slider("At least this many years", [2, 5, 10], value=5, key="years",
-                                 help="The fewest years of that experience.")
+                        key="kind")
+        years = st.select_slider("At least this many years", [2, 5, 10], value=5, key="years")
     if mode == "education":
         inst_cut = st.selectbox("Institution rank at least", [None, *service.INSTITUTION_LABELS], key="inst_cut",
-                                help="CVs from lower-ranked institutions are held.",
                                 format_func=lambda v: "No cutoff" if v is None else service.INSTITUTION_LABELS[v])
     if mode == "publications":
         venue_cut = st.selectbox("At least one paper in a venue of level", [None, *service.VENUE_LABELS],
-                                 key="venue_cut", help="Needs one paper at this level or higher.",
+                                 key="venue_cut",
                                  format_func=lambda v: "No cutoff" if v is None else service.VENUE_LABELS[v])
 
 keywords = st.text_area("Topic keywords (comma separated)", key="keywords", height=70,
-                        placeholder="machine learning, signal processing, deep learning",
-                        help="Topics the CV should cover; leave empty to skip.")
+                        placeholder="machine learning, signal processing, deep learning")
 synonyms = st.text_area("Synonyms (one per line)", key="synonyms", height=70,
-                        placeholder="machine learning: ML, deep learning",
-                        help="Other words that mean the same as a keyword.")
+                        placeholder="machine learning: ML, deep learning")
 
 # ---------------------------------------------------------------- 3. Run
 
 st.header("3. Run")
 run = st.session_state.get("shortlist_run")
-panel = st.empty()
 count = len(pdfs) if source == FOLDER else len(uploads)
 clicked = st.button("Rank the CVs", type="primary", disabled=count == 0, key="run")
 status = st.empty()
 bar_slot = st.empty()
-
-
-def show_strip(where, board, run) -> None:
-    with where.container():
-        with st.expander(service.strip_text(board)):
-            html(service.panel_html(board, run.mode, {t: len(v) for t, v in run.by_tier.items()}))
-
 
 if clicked:
     try:
@@ -117,24 +103,22 @@ if clicked:
             "keywords": keywords, "synonyms": synonyms})
         paths = pdfs if source == FOLDER else service.save_uploads([(u.name, u.getvalue()) for u in uploads])
         board = service.StatusBoard(len(paths))
-        html(service.panel_html(board, mode), panel)
+        html(service.panel_html(board), panel)
         bar = bar_slot.progress(0.0)
 
         def progress(event: dict) -> None:
             board.update(event)
             status.write(board.status)
             bar.progress(board.bar())
-            html(service.panel_html(board, mode), panel)
+            html(service.panel_html(board), panel)
 
         run = service.run_shortlist(profile, paths, progress_callback=progress)
         st.session_state["shortlist_run"], st.session_state["board"] = run, board
-        show_strip(panel, board, run)
     except (service.ServiceError, ValueError) as exc:
         st.error(str(exc))
-elif run is not None and st.session_state.get("board") is not None:
-    show_strip(panel, st.session_state["board"], run)
-else:
-    html(service.panel_html(None, mode), panel)
+
+board = st.session_state.get("board") if run is not None else None
+html(service.panel_html(board, {t: len(v) for t, v in run.by_tier.items()} if run is not None else None), panel)
 
 # ---------------------------------------------------------------- 4. Results
 
@@ -162,17 +146,16 @@ def show_card(r: dict) -> None:
     if c["missing"]:
         st.write("Missing: " + " ".join(c["missing"]))
     if c["requirements"]:
-        html(service.plain_table_html(c["requirements"]))
+        st.dataframe(c["requirements"], hide_index=True)
 
 
 if run is not None:
     st.header("4. Results")
     st.write(service.summary_line(run))
     f1, f2 = st.columns(2)
-    sort_by = f1.selectbox("Sort by", ["score", "file"], key="sort_by", help="Order of the CVs in each tab.",
+    sort_by = f1.selectbox("Sort by", ["score", "file"], key="sort_by",
                            format_func={"score": "Score (high to low)", "file": "File name (A to Z)"}.get)
-    min_score = f2.slider("Minimum score", 0, 100, 0, 5, format="%d%%", key="min_score",
-                          help="Hide CVs scoring below this.")
+    min_score = f2.slider("Minimum score", 0, 100, 0, 5, format="%d%%", key="min_score")
     shown = {t: service.sort_and_filter(run.by_tier.get(t, []), sort_by, min_score / 100 if t != "Unreadable" else 0.0)
              for t in service.TIERS}
     tabs = st.tabs([f"{t} ({len(shown[t])})" for t in service.TIERS])
@@ -188,7 +171,7 @@ if run is not None:
                     with b:
                         open_button(run, r)
                 continue
-            html(service.table_html(service.table_rows(rows), TABLE_COLUMNS))
+            st.dataframe(service.table_rows(rows), hide_index=True)
             for r in rows:
                 with st.expander(f"#{r['rank']} · {r['file_name']} · {service.percent(r['score'])}"):
                     show_card(r)
@@ -196,7 +179,6 @@ if run is not None:
 
     st.subheader("Export")
     label = st.radio("Label rows by", ["resume_id", "file_name"], horizontal=True, key="export_label",
-                     help="Resume ID hides the file name.",
                      format_func={"resume_id": "Resume ID", "file_name": "File name"}.get)
     st.download_button("Download the ranked table (CSV)", service.export_csv_text(run, label),
                        file_name="shortlist.csv", mime="text/csv", key="export",
@@ -223,5 +205,4 @@ if st.session_state.get("confirm_clear"):
     y.button("Yes, clear saved results", key="clear_yes", on_click=clear_saved)
     n.button("Cancel", key="clear_no", on_click=lambda: st.session_state.update(confirm_clear=False))
 else:
-    st.button("Clear saved results", key="clear", help="Forget earlier readings; CVs are read again.",
-              on_click=lambda: st.session_state.update(confirm_clear=True))
+    st.button("Clear saved results", key="clear", on_click=lambda: st.session_state.update(confirm_clear=True))

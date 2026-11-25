@@ -1,0 +1,4 @@
+{
+ "_comment": "Recruiter UI display settings only; nothing here changes the parser, the scores or the tiers. min_step_display_seconds: the shortest time each of our own fast steps (rankings, years, score, sort) stays highlighted in the pipeline panel; parser stages are never delayed.",
+ "min_step_display_seconds": 0.6
+}

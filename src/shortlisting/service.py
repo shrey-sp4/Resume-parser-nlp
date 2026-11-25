@@ -2,26 +2,29 @@
 testable on its own.
 
     run_shortlist(profile, pdf_paths, work_dir=None, progress_callback=None)
-        runs the parser on each PDF (outputs saved by file hash in work_dir/cache), scores the pool
-        with the shortlisting scorer and returns a ShortlistRun: ranked results, by tier, and the
-        path of each file (for the Open CV button).
+        reads each PDF with the parser (outputs saved by file hash in work_dir/cache), scores the
+        pool with the shortlisting scorer and returns a ShortlistRun: ranked results, by tier, and
+        the path of each file (for the Open CV button).
 
-Progress: progress_callback(event) gets one dict per stage event, in order. Per CV:
-{"cv": k, "total": n, "file": name, "step": STEP, "state": "running" | "done"} for each step in
-PARSE_STEPS, then {"state": "finished"} or {"state": "could_not_read"}; a CV read before gives
-one {"state": "saved"} instead. The steps are observed by wrapping the parser's own stage functions
-(resume_parser.pipeline.default_stages, passed to run_pipeline as its stage list), so the parser
-itself is unchanged and its output is identical. Stage 5 reads education, experience and
-publications in one call, so those three are one step here. After all CVs:
-{"cv": None, "step": "Scoring", "state": "running" | "done"}. ProgressBoard turns the events into
-rows and a progress bar.
+Progress: progress_callback(event) gets one dict per step event, in the order of STEPS:
+{"cv": k or None, "total": n, "file": name, "step": step, "state": "running" | "done"}.
+- The first four steps are the parser's own stage boundaries, observed by wrapping its stage
+  functions (resume_parser.pipeline.default_stages, passed to run_pipeline as its stage list): the
+  parser is unchanged and its output identical. Stage 5 reads education, experience and
+  publications in one call, so those three are one step. A CV read before gives one
+  {"state": "saved"} instead; a CV that could not be read gives {"state": "could_not_read"} and the
+  run continues.
+- Then, per CV, our own steps: the venue and institution lookups (they fill the scorer's own
+  lookup cache, with the same calls the features make) and the experience years (the same
+  calculator the scorer uses); then, for the pool (cv None), scoring and sorting into tiers (the
+  scorer's score_pool and its ranking, as Shortlister.rank without the stability runs).
+StatusBoard turns the events into the status line, the progress bar and the pipeline panel state.
 
-Everything shown to a recruiter (table_rows, card, summary_line, export) is in plain words: no
-parser codes, entry numbers or internal names. work_dir: RESUME_SHORTLIST_DIR, else
-RESUME_DATA_DIR/shortlist_runs; a folder inside the repo is always refused. Uploads go only to
-work_dir/uploads, exports to work_dir/exports, saved requirements to work_dir/profiles. Nothing here
-reads or returns a name, gender, age, photo or nationality field (the scorer sees only education,
-experience and publications).
+Everything shown to a recruiter is in plain words: no parser codes, entry numbers or internal
+names. work_dir: RESUME_SHORTLIST_DIR, else RESUME_DATA_DIR/shortlist_runs; a folder inside the
+repo is always refused. Uploads go only to work_dir/uploads and exports to work_dir/exports.
+Nothing here reads or returns a name, gender, age, photo or nationality field (the scorer sees
+only education, experience and publications).
 """
 
 from __future__ import annotations
@@ -35,17 +38,19 @@ import os
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
+from html import escape
 from pathlib import Path
 from typing import Callable
 
 from resume_parser.schema import REPO_ROOT, DataDirError, data_root, load_config, resume_id_for
+from shortlisting.experience import compute_experience
 from shortlisting.features import safe_view
-from shortlisting.profile import RequirementProfile, job_ad_keywords
-from shortlisting.scorer import Candidate, Shortlister
+from shortlisting.profile import RequirementProfile
+from shortlisting.scorer import TIER_ORDER, Candidate, Shortlister
 
 ENV_WORK_DIR = "RESUME_SHORTLIST_DIR"
 CACHE_VERSION = 1
-TIERS = ("Shortlist", "Review", "Hold", "Unreadable")
+TIERS = TIER_ORDER
 
 MODE_LABELS = {"default": "Default", "education": "Education-heavy", "experience": "Experience-heavy",
                "publications": "Publications-heavy"}
@@ -53,22 +58,37 @@ DEGREE_LABELS = {"bachelors": "Bachelors", "masters": "Masters", "doctorate": "D
 INSTITUTION_LABELS = {"Tier 1": "Top", "Tier 2": "Good", "Tier 3": "Fair"}
 VENUE_LABELS = {"A": "Top", "B": "Good", "C": "Fair"}
 NOT_LISTED = "Not listed"
-CONFIDENCE = {"high": "High confidence", "medium": "Medium confidence", "low": "Low confidence"}
-COMPONENT_LABELS = {"education": "Education", "experience": "Experience", "publications": "Publications",
-                    "topic_fit": "Topic match"}
+AREAS = {"education": "Education", "experience": "Experience", "publications": "Publications",
+         "topic_fit": "Topic match"}
+WEIGHT_NAMES = {"education": "Education", "experience": "Experience", "publications": "Publications",
+                "topic_fit": "Topic"}
 
 NOTE = "Tiers are decision support. Please read the CV before deciding."
 UNREADABLE_TEXT = "We could not read this CV automatically. Please open it and review it manually."
 FOLDER_MISSING = "We could not find this folder. Please check the path."
 
-# the parser's stages, grouped into the steps a recruiter sees
-PARSE_STEPS = (
-    ("Reading the PDF", ("stage0", "stage1", "stage2")),
-    ("Finding sections", ("stage3", "stage4")),
-    ("Reading education, experience and publications", ("stage5",)),
-    ("Checking", ("stage6", "stage7")),
+# (step, one-line description); the first four are parser stages
+READ_PDF, SECTIONS, ENTRIES, CHECKING = ("Reading the PDF", "Finding sections",
+                                         "Reading education, experience and publications", "Checking the reading")
+LOOKUPS, YEARS, SCORING, SORTING = ("Looking up journal, conference and institution rankings",
+                                    "Working out experience years", "Scoring", "Sorting into tiers")
+STEPS = (
+    (READ_PDF, "Takes the text out of each page"),
+    (SECTIONS, "Finds headings like Education and Experience"),
+    (ENTRIES, "Finds education, experience and publications"),
+    (CHECKING, "Checks the reading is complete"),
+    (LOOKUPS, "Matches venues and institutions to ranking lists"),
+    (YEARS, "Adds up years from the dates"),
+    (SCORING, "Weighs the areas for your mode"),
+    (SORTING, "Puts each CV into a tier"),
 )
-SCORING = "Scoring"
+STEP_NAMES = tuple(s for s, _ in STEPS)
+SHORT_NAMES = ("Read", "Sections", "Details", "Check", "Rankings", "Years", "Score", "Tiers")
+PARSE_STEPS = ((READ_PDF, ("stage0", "stage1", "stage2")), (SECTIONS, ("stage3", "stage4")),
+               (ENTRIES, ("stage5",)), (CHECKING, ("stage6", "stage7")))
+INPUTS = (("Your CVs", "The PDF files you chose"), ("Your requirements", "Field, degree, mode and keywords"))
+TIER_TEXT = {"Shortlist": "Strong match with enough found", "Review": "Worth a closer look",
+             "Hold": "Not shortlisted for now", "Unreadable": "Please open and read by hand"}
 SAVED = "Already read (saved)"
 COULD_NOT_READ = "Could not read"
 
@@ -91,6 +111,14 @@ MISSING_TEXT = {
 
 EXPERIENCE_STATUS = {"meets": "meets the required years", "likely_meets": "probably meets the required years",
                      "does_not_meet": "below the required years", "unknown": "years could not be worked out"}
+
+HINTS = {
+    "Rank": "Position by score among all CVs",
+    "CV": "The file name of the CV",
+    "Score": "How well the CV matches your requirements",
+    "Based on": "How many of the four areas were found",
+    "Reason": "Why the CV is in this tier",
+}
 
 
 class ServiceError(RuntimeError):
@@ -130,18 +158,14 @@ def find_pdfs(folder: str | Path) -> list[Path]:
     return sorted((p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".pdf"), key=lambda p: p.name)
 
 
-def _safe_name(name: str, suffix: str) -> str:
-    safe = re.sub(r"[^A-Za-z0-9._ -]", "_", Path(str(name)).name).strip(" .") or "file"
-    return safe if safe.lower().endswith(suffix) else safe + suffix
-
-
 def save_uploads(files: list[tuple[str, bytes]], work_dir: str | Path | None = None) -> list[Path]:
     """Copy uploaded (name, bytes) pairs into work_dir/uploads, only there; returns their paths."""
     folder = resolve_work_dir(work_dir) / "uploads"
     folder.mkdir(exist_ok=True)
     out = []
     for name, data in files:
-        target = folder / _safe_name(name, ".pdf")
+        safe = re.sub(r"[^A-Za-z0-9._ -]", "_", Path(str(name)).name).strip(" .") or "upload"
+        target = folder / (safe if safe.lower().endswith(".pdf") else safe + ".pdf")
         target.write_bytes(data)
         out.append(target)
     return out
@@ -233,48 +257,48 @@ def load_indexes():
 # ---------------------------------------------------------------- progress
 
 
-class ProgressBoard:
-    """Rows (one per CV: file, step, done tick) and a progress bar, from the progress events."""
+class StatusBoard:
+    """The status line, the progress bar and the pipeline panel state, from the progress events.
+    Panel state: active (index into STEPS or None), done (set of indexes), started, finished."""
 
-    def __init__(self, files: list[str]):
-        self.files = list(files)
-        self.step = {k: "Waiting" for k in range(1, len(files) + 1)}
-        self.done = {k: False for k in self.step}
-        self.units = {k: 0 for k in self.step}  # finished parse steps per CV
-        self.current = 0
-        self.scoring = None
+    def __init__(self, total: int):
+        self.total = total
+        self.active: int | None = None
+        self.done: set[int] = set()
+        self.started = self.finished = False
+        self.status = ""
+        self.units = 0  # finished step events, for the bar
 
     def update(self, e: dict) -> None:
-        if e["cv"] is None:
-            self.scoring = e["state"]
-            for k in self.step:
-                if self.step[k] != COULD_NOT_READ:
-                    self.step[k] = SCORING if e["state"] == "running" else "Done"
-                    self.done[k] = e["state"] == "done"
-            return
-        k, state = e["cv"], e["state"]
-        self.current = k
+        self.started = True
+        where = f"CV {e['cv']} of {self.total}" if e["cv"] is not None else f"{self.total} CV{'s' if self.total != 1 else ''}"
+        state = e["state"]
         if state == "running":
-            self.step[k] = e["step"]
+            i = STEP_NAMES.index(e["step"])
+            self.active, self.done = i, set(range(i))
+            self.status = f"{e['step']} · {where}"
         elif state == "done":
-            self.units[k] += 1
-        elif state == "saved":
-            self.step[k], self.units[k] = SAVED, len(PARSE_STEPS)
-        elif state == "could_not_read":
-            self.step[k], self.units[k] = COULD_NOT_READ, len(PARSE_STEPS)
-        elif state == "finished":
-            self.step[k], self.units[k] = "Read", len(PARSE_STEPS)
+            i = STEP_NAMES.index(e["step"])
+            self.done.add(i)
+            self.active = None
+            self.units += 1
+            if e["step"] == SORTING:
+                self.finished, self.done = True, set(range(len(STEPS)))
+                self.status = f"Done · {where}"
+        elif state in ("saved", "could_not_read"):
+            self.active, self.done = None, set(range(len(PARSE_STEPS)))
+            self.units += len(PARSE_STEPS)
+            self.status = f"{SAVED if state == 'saved' else COULD_NOT_READ} · {where}"
 
-    def rows(self) -> list[dict]:
-        return [{"CV": f, "Stage": self.step[k], "Done": "✓" if self.done[k] else ""}
-                for k, f in enumerate(self.files, 1)]
+    def bar(self) -> float:
+        total = self.total * (len(PARSE_STEPS) + 2) + 2
+        return min(1.0, self.units / total) if total else 1.0
 
-    def bar(self) -> tuple[float, str]:
-        n = len(self.files)
-        total = n * len(PARSE_STEPS) + 1
-        done = sum(self.units.values()) + (self.scoring == "done")
-        text = SCORING if self.scoring else f"CV {max(self.current, 1)} of {n}"
-        return (done / total if total else 1.0), text
+    def box_states(self) -> list[str]:
+        """One of neutral, active, done, later per step."""
+        if not self.started:
+            return ["neutral"] * len(STEPS)
+        return ["done" if i in self.done else "active" if i == self.active else "later" for i in range(len(STEPS))]
 
 
 # ---------------------------------------------------------------- the run
@@ -286,6 +310,7 @@ class ShortlistRun:
     work_dir: Path
     by_tier: dict = field(default_factory=dict)
     paths: dict = field(default_factory=dict)  # resume_id -> PDF path (for Open CV); never exported
+    mode: str = "default"
 
     @property
     def unreadable(self) -> list[dict]:
@@ -321,10 +346,32 @@ def _degrees(resume: dict) -> list[str]:
     return [DEGREE_LABELS[lv] for lv in sorted({lv for lv in levels if lv in DEGREE_LABELS}, key=order.index, reverse=True)]
 
 
+def _look_up_rankings(s: Shortlister, view: dict) -> None:
+    """The venue and institution lookups for one CV, made exactly as features.education and
+    features.publications make them, so they land in the scorer's own lookup cache."""
+    for e in view.get("education") or []:
+        if str(e.get("institution") or "").strip():
+            s.institution_tier(e["institution"])
+    for pub in view.get("publications") or []:
+        ty = pub.get("type")
+        venue = str(pub.get("venue") or "").strip()
+        if ty in s.cfg["publications"]["types"] and venue:
+            s.venue_tier(venue, ty)
+
+
+def _rank(s: Shortlister, results: list[dict]) -> list[dict]:
+    """Shortlister.rank without the stability runs: rank by score, then sort by tier."""
+    ranks = s._ranks(results)
+    for r in results:
+        r["rank"] = ranks.get(r["resume_id"])
+        r["rank_range"] = [r["rank"], r["rank"]] if r["rank"] is not None else None
+    return sorted(results, key=lambda r: (TIER_ORDER.index(r["tier"]), r["rank"] or 10 ** 9, r["resume_id"]))
+
+
 def run_shortlist(profile: RequirementProfile, pdf_paths: list[str | Path], work_dir: str | Path | None = None,
-                  progress_callback: Callable[[dict], None] | None = None, today: dt.date | None = None,
-                  stability: bool = False) -> ShortlistRun:
-    """Parse (saved by hash), score and rank, with progress events (see the module docstring)."""
+                  progress_callback: Callable[[dict], None] | None = None, today: dt.date | None = None
+                  ) -> ShortlistRun:
+    """Read (saved by hash), score and rank, with progress events (see the module docstring)."""
     work = resolve_work_dir(work_dir)
     cache = work / "cache"
     pdfs = [Path(p) for p in pdf_paths]
@@ -332,6 +379,7 @@ def run_shortlist(profile: RequirementProfile, pdf_paths: list[str | Path], work
     n = len(pdfs)
     emit = progress_callback or (lambda e: None)
     candidates, names, extra = [], {}, {}
+    step_of = {stage: (label, stages) for label, stages in PARSE_STEPS for stage in stages}
     for k, (pdf, rid) in enumerate(zip(pdfs, ids), 1):
         base = {"cv": k, "total": n, "file": pdf.name}
         saved = read_saved(pdf, cache) is not None
@@ -339,8 +387,6 @@ def run_shortlist(profile: RequirementProfile, pdf_paths: list[str | Path], work
             emit({**base, "step": SAVED, "state": "saved"})
             main, sidecar, text = parse_cached(pdf, cache)
         else:
-            step_of = {s: (label, stages) for label, stages in PARSE_STEPS for s in stages}
-
             def on_stage(stage, when, base=base):
                 label, stages = step_of[stage]
                 if when == "start" and stage == stages[0]:
@@ -356,28 +402,35 @@ def run_shortlist(profile: RequirementProfile, pdf_paths: list[str | Path], work
             flags = sorted({f.get("code", "") for f in sidecar.get("flags") or [] if isinstance(f, dict)})
         if decision == "FAIL":
             emit({**base, "step": COULD_NOT_READ, "state": "could_not_read"})
-        elif not saved:
-            emit({**base, "step": "Read", "state": "finished"})
         candidates.append(Candidate(rid, main or {}, decision, flags, text))
         names[rid] = pdf.name
         extra[rid] = {"unreadable_reason": _unreadable_reason(sidecar) if decision == "FAIL" else "",
                       "degrees": _degrees(main or {})}
-    emit({"cv": None, "total": n, "step": SCORING, "state": "running"})
     venues, institutions = load_indexes()
-    results = Shortlister(profile, venues, institutions, today=today).rank(candidates, stability=stability)
+    s = Shortlister(profile, venues, institutions, today=today)
+    for step, work_fn in ((LOOKUPS, lambda c: _look_up_rankings(s, safe_view(c.resume))),
+                          (YEARS, lambda c: compute_experience(safe_view(c.resume), profile.experience_kind,
+                                                               profile.experience_years, today=s.today, text=c.text))):
+        for k, (pdf, cand) in enumerate(zip(pdfs, candidates), 1):
+            base = {"cv": k, "total": n, "file": pdf.name, "step": step}
+            emit({**base, "state": "running"})
+            work_fn(cand)
+            emit({**base, "state": "done"})
+    pool = {"cv": None, "total": n, "file": None}
+    emit({**pool, "step": SCORING, "state": "running"})
+    scored = s.score_pool(candidates)
+    emit({**pool, "step": SCORING, "state": "done"})
+    emit({**pool, "step": SORTING, "state": "running"})
+    results = _rank(s, scored)
     for r in results:
         r["file_name"] = names[r["resume_id"]]
         r.update(extra[r["resume_id"]])
-    emit({"cv": None, "total": n, "step": SCORING, "state": "done"})
     by_tier = {t: [r for r in results if r["tier"] == t] for t in TIERS}
-    return ShortlistRun(results, work, by_tier, {rid: pdf for rid, pdf in zip(ids, pdfs)})
+    emit({**pool, "step": SORTING, "state": "done"})
+    return ShortlistRun(results, work, by_tier, {rid: pdf for rid, pdf in zip(ids, pdfs)}, profile.mode)
 
 
-# ---------------------------------------------------------------- requirements (form, saved profiles)
-
-
-FORM_KEYS = ("mode", "field", "min_degree_level", "experience_kind", "experience_years",
-             "institution_tier_cutoff", "venue_tier_cutoff", "keywords", "synonyms")
+# ---------------------------------------------------------------- requirements
 
 
 def field_options() -> list[tuple[str | None, str]]:
@@ -401,13 +454,10 @@ def parse_synonyms(text: str) -> dict[str, list[str]]:
     return out
 
 
-def suggest_keywords(job_ad: str) -> list[str]:
-    return job_ad_keywords(job_ad or "")
-
-
 def build_profile(form: dict) -> RequirementProfile:
-    """A profile from the UI form (FORM_KEYS; keywords and synonyms as text). Cutoffs only apply
-    in their own mode."""
+    """A profile from the UI form: mode, field, min_degree_level, experience_kind,
+    experience_years, institution_tier_cutoff, venue_tier_cutoff, keywords and synonyms (text).
+    Cutoffs only apply in their own mode."""
     mode = form.get("mode", "default")
     synonyms = parse_synonyms(form.get("synonyms", ""))
     keywords = parse_keywords(form.get("keywords", ""))
@@ -420,39 +470,47 @@ def build_profile(form: dict) -> RequirementProfile:
         keywords=keywords, synonyms=synonyms)
 
 
-def _profiles_dir(work_dir) -> Path:
-    folder = resolve_work_dir(work_dir) / "profiles"
-    folder.mkdir(exist_ok=True)
-    return folder
-
-
-def save_profile(name: str, form: dict, work_dir: str | Path | None = None) -> Path:
-    """Save the form values as work_dir/profiles/<name>.json."""
-    if not str(name or "").strip():
-        raise ServiceError("Please give the requirements a name.")
-    path = _profiles_dir(work_dir) / _safe_name(name.strip(), ".json")
-    data = {k: form.get(k) for k in FORM_KEYS}
-    path.write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
-    return path
-
-
-def list_profiles(work_dir: str | Path | None = None) -> list[str]:
-    return sorted(p.stem for p in _profiles_dir(work_dir).glob("*.json"))
-
-
-def load_profile(name: str, work_dir: str | Path | None = None) -> dict:
-    path = _profiles_dir(work_dir) / _safe_name(name, ".json")
-    if not path.is_file():
-        raise ServiceError("Those saved requirements were not found.")
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return {k: data.get(k) for k in FORM_KEYS}
+def weights_text(mode: str) -> str:
+    """The mode's weights from config, e.g. 'Education 25 · Experience 20 · Publications 25 · Topic 30'."""
+    w = load_config("shortlisting.json")["weights"][mode]
+    return " · ".join(f"{WEIGHT_NAMES[k]} {w[k]:g}" for k in WEIGHT_NAMES)
 
 
 # ---------------------------------------------------------------- presentation (plain words only)
 
 
-def confidence_text(level: str | None) -> str:
-    return CONFIDENCE.get(level or "", "")
+def percent(score: float | None) -> str:
+    return "" if score is None else f"{round(score * 100)}%"
+
+
+def _join(words: list[str]) -> str:
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
+
+
+COUNTED = ("Found", "None found")  # areas the score is based on
+EMPTY_BUT_COUNTED = {"no_publication_entries"}  # counted in the score (as 0) though the CV has none
+
+
+def areas(result: dict) -> list[tuple[str, str]]:
+    """(area, Found / None found / Not found / Not used) for the four areas: Found unless the scorer
+    dropped it, None found when it is counted but the CV has none (no publications), Not found
+    when dropped, Not used for a topic match without keywords."""
+    dropped = {d["component"]: d["reason"] for d in result.get("dropped_components") or []}
+    comps = result.get("components") or {}
+    out = []
+    for key, label in AREAS.items():
+        if key not in dropped:
+            empty = (comps.get(key) or {}).get("reason") in EMPTY_BUT_COUNTED
+            out.append((label, "None found" if empty else "Found"))
+        else:
+            out.append((label, "Not used" if dropped[key] == "no_keywords" else "Not found"))
+    return out
+
+
+def based_on(result: dict) -> str:
+    if result["tier"] == "Unreadable":
+        return ""
+    return f"{sum(1 for _, s in areas(result) if s in COUNTED)} of {len(AREAS)}"
 
 
 def _institution_label(tier: str | None) -> str:
@@ -481,13 +539,32 @@ def _check_text(key: str, v: dict) -> tuple[str, str]:
 RESULT_TEXT = {"pass": "Met", "fail": "Not met", "unknown": "Could not check"}
 
 
+def _thin_evidence(result: dict) -> str:
+    """The plain sentence for a CV held back by thin evidence or missing areas."""
+    score = result.get("score")
+    missing = [a for a, s in areas(result) if s == "Not found"]
+    if score is None:
+        lead = "Not enough was found to score"
+        return f"{lead}: {_join(missing)} {'was' if len(missing) == 1 else 'were'} not found. Please check the CV." \
+            if missing else f"{lead}. Please check the CV."
+    level = "High" if score >= load_config("shortlisting.json")["shortlist_threshold"] else "Medium" if score >= 0.4 else "Low"
+    if missing:
+        return f"{level} match, but {_join(missing)} {'was' if len(missing) == 1 else 'were'} not found. Please check the CV."
+    return f"{level} match, but little could be read clearly. Please check the CV."
+
+
 def reason_text(result: dict) -> str:
     """Why the CV is in its tier, in plain words (never 'rejected' or 'failed')."""
     if result["tier"] == "Unreadable":
         return " ".join(x for x in (UNREADABLE_TEXT, result.get("unreadable_reason", "")) if x)
     out = []
-    for r in result.get("tier_reasons") or []:
+    reasons = result.get("tier_reasons") or []
+    if any(r == "overall certainty low" or r.startswith("key component unusable") for r in reasons):
+        out.append(_thin_evidence(result))
+    for r in reasons:
         kind, _, key = r.partition(": ")
+        if r == "overall certainty low" or kind == "key component unusable":
+            continue
         if kind == "eligibility fail":
             out.append({"min_degree_level": "Below the minimum degree",
                         "institution_tier": "Institution below the chosen rank",
@@ -495,10 +572,6 @@ def reason_text(result: dict) -> str:
                         "experience_tier": "Fewer years of experience than required"}.get(key, "A requirement is not met"))
         elif kind == "eligibility unknown":
             out.append(_check_text(key, {"result": "unknown", "reason": ""})[1])
-        elif kind == "key component unusable":
-            out.append(f"No usable {COMPONENT_LABELS.get(key, key).lower()} information")
-        elif r == "overall certainty low":
-            out.append("Too little could be read with confidence")
         elif r == "education: editorial override":
             out.append("Institution rank set by the university's list")
         elif r == "education: unlisted institution":
@@ -517,18 +590,16 @@ def reason_text(result: dict) -> str:
 
 
 def table_rows(results: list[dict], label: str = "file_name") -> list[dict]:
-    """Rows for a results table: rank, CV (file name or resume ID), score, confidence, reason.
-    No name, gender, age, photo or nationality field ever appears."""
+    """Rows for a results table: Rank, CV (file name or resume ID), Score (a percentage), Based on,
+    Reason. No name, gender, age, photo or nationality field ever appears."""
     return [{"Rank": r["rank"] if r["rank"] is not None else "",
              "CV": r["file_name"] if label == "file_name" else r["resume_id"],
-             "Score": "" if r["score"] is None else round(r["score"], 2),
-             "Confidence": "" if r["tier"] == "Unreadable" else confidence_text(r["certainty"]["level"]),
-             "Reason": reason_text(r)} for r in results]
+             "Score": percent(r["score"]), "Based on": based_on(r), "Reason": reason_text(r)} for r in results]
 
 
 def sort_and_filter(results: list[dict], sort_by: str = "score", min_score: float = 0.0) -> list[dict]:
-    """sort_by 'score' (high first) or 'file' (A to Z); CVs without a score are kept only when
-    min_score is 0."""
+    """sort_by 'score' (high first) or 'file' (A to Z); min_score in 0-1. CVs without a score are
+    kept only when min_score is 0."""
     kept = [r for r in results if (r["score"] if r["score"] is not None else -1) >= min_score or
             (min_score <= 0 and r["score"] is None)]
     if sort_by == "file":
@@ -542,16 +613,16 @@ def summary_line(run: ShortlistRun) -> str:
 
 
 def card(result: dict) -> dict:
-    """What was found and what is missing, in plain words, for one CV. Components: name, value,
-    confidence, found (list of lines). Plus missing, requirements, reason."""
+    """What was found and what is missing, in plain words, for one CV: areas (Found / Not found),
+    based_on, components (name, value, found lines), missing, requirements, reason."""
     comps, missing = [], []
+    status = dict(areas(result))
     for name, c in result["components"].items():
         ev = c["evidence"] or {}
         found = []
         if name == "education":
-            degrees = result.get("degrees") or []
-            if degrees:
-                found.append("Degrees: " + ", ".join(degrees))
+            if result.get("degrees"):
+                found.append("Degrees: " + ", ".join(result["degrees"]))
             if "institution" in ev:
                 found.append(f"Best institution: {_institution_label(ev['institution']['tier'])}")
             elif ev.get("unlisted_entries"):
@@ -562,22 +633,20 @@ def card(result: dict) -> dict:
             found.append(EXPERIENCE_STATUS.get(ev["status"], "").capitalize())
         elif name == "publications" and ev.get("counted"):
             found.append(f"{ev['counted']} paper{'s' if ev['counted'] != 1 else ''}")
-            tiers = ev.get("by_tier") or {}
-            found.append("Venues: " + ", ".join(f"{VENUE_LABELS.get(t, NOT_LISTED)} {k}" for t, k in tiers.items()))
-        if c["value"] is None or c["reason"] in ("no_publication_entries",):
-            text = MISSING_TEXT.get(c["reason"])
-            if text:
-                missing.append(text)
-        if name == "topic_fit" and c["reason"] == "no_keywords":
-            continue  # switched off by the recruiter: not a finding about the CV
-        comps.append({"name": COMPONENT_LABELS.get(name, name), "value": c["value"],
-                      "confidence": confidence_text(c["certainty"]), "found": [f for f in found if f]})
+            found.append("Venues: " + ", ".join(f"{VENUE_LABELS.get(t, NOT_LISTED)} {k}" for t, k in (ev.get("by_tier") or {}).items()))
+        if (c["value"] is None or c["reason"] == "no_publication_entries") and MISSING_TEXT.get(c["reason"]):
+            missing.append(MISSING_TEXT[c["reason"]])
+        comps.append({"name": AREAS.get(name, name), "status": status[AREAS[name]], "value": c["value"],
+                      "score": percent(c["value"]), "found": [f for f in found if f]})
     reqs = []
     for k, v in result["eligibility"].items():
         req, why = _check_text(k, v)
         reqs.append({"Requirement": req, "Result": RESULT_TEXT[v["result"]], "Details": why})
-    return {"components": comps, "missing": list(dict.fromkeys(missing)), "requirements": reqs,
-            "confidence": confidence_text(result["certainty"]["level"]), "reason": reason_text(result)}
+    return {"areas": areas(result), "based_on": based_on(result), "components": comps,
+            "missing": list(dict.fromkeys(missing)), "requirements": reqs, "reason": reason_text(result)}
+
+
+EXPORT_COLUMNS = ["Tier", "Rank", "CV", "Score", "Based on", "Areas found", "Reason"]
 
 
 def export_rows(run: ShortlistRun, label: str = "resume_id") -> list[dict]:
@@ -585,13 +654,14 @@ def export_rows(run: ShortlistRun, label: str = "resume_id") -> list[dict]:
     for r in run.results:
         row = {"Tier": r["tier"]}
         row.update(table_rows([r], "file_name" if label == "file_name" else "resume_id")[0])
-        rows.append(row)
+        row["Areas found"] = "" if r["tier"] == "Unreadable" else ", ".join(a for a, s in areas(r) if s in COUNTED)
+        rows.append({k: row[k] for k in EXPORT_COLUMNS})
     return rows
 
 
 def export_csv_text(run: ShortlistRun, label: str = "resume_id") -> str:
     buf = io.StringIO()
-    w = csv.DictWriter(buf, fieldnames=["Tier", "Rank", "CV", "Score", "Confidence", "Reason"], lineterminator="\n")
+    w = csv.DictWriter(buf, fieldnames=EXPORT_COLUMNS, lineterminator="\n")
     w.writeheader()
     w.writerows(export_rows(run, label))
     return buf.getvalue()
@@ -604,3 +674,97 @@ def export_csv(run: ShortlistRun, label: str = "resume_id") -> Path:
     path = folder / f"shortlist_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     path.write_text(export_csv_text(run, label), encoding="utf-8", newline="")
     return path
+
+
+# ---------------------------------------------------------------- HTML (fonts, panel, tables, chips)
+
+HEADING_FONT = "Garamond, 'EB Garamond', Georgia, serif"
+TEXT_FONT = "'Times New Roman', Times, serif"
+
+CSS = f"""<style>
+.stApp, .stApp p, .stApp li, .stApp label, .stApp input, .stApp textarea, .stApp button, .stApp td, .stApp th,
+.stApp span:not([data-testid="stIconMaterial"]), .stApp div, .stApp a, .stApp summary,
+.stApp [data-baseweb="tab"] p, .stApp [data-testid="stMarkdownContainer"] p,
+div[data-baseweb="popover"] li, div[data-baseweb="popover"] div, div[data-baseweb="tooltip"] div,
+[role="listbox"], [role="listbox"] *, [role="option"], [role="option"] *,
+[data-testid="stTooltipContent"] p {{ font-family: {TEXT_FONT} !important; }}
+.stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h1 span, .stApp h2 span, .stApp h3 span,
+.stApp h4 span {{ font-family: {HEADING_FONT} !important; }}
+.rp-panel {{ display: flex; flex-wrap: wrap; gap: 6px; align-items: stretch; margin: 4px 0 8px 0; }}
+.rp-box {{ border: 1px solid #b8b8b8; border-radius: 3px; padding: 6px 8px; min-width: 120px; max-width: 170px;
+  background: #ffffff; color: #222222; font-size: 0.85rem; line-height: 1.25; }}
+.rp-box .rp-name {{ font-weight: bold; }}
+.rp-box .rp-desc {{ font-size: 0.75rem; color: #555555; margin-top: 2px; }}
+.rp-box.rp-input, .rp-box.rp-tier {{ background: #fafafa; }}
+.rp-box.rp-active {{ border-color: #2f5d9b; background: #e9f0fa; animation: rp-pulse 1.4s ease-in-out infinite; }}
+.rp-box.rp-done {{ border-color: #5f8a66; }}
+.rp-box.rp-later {{ color: #9a9a9a; background: #f3f3f3; border-color: #d6d6d6; }}
+.rp-box.rp-later .rp-desc {{ color: #a8a8a8; }}
+.rp-arrow {{ align-self: center; color: #888888; }}
+@keyframes rp-pulse {{ 0%, 100% {{ box-shadow: 0 0 0 0 rgba(47, 93, 155, 0.35); }}
+  50% {{ box-shadow: 0 0 0 4px rgba(47, 93, 155, 0); }} }}
+.rp-table {{ border-collapse: collapse; width: 100%; font-size: 0.92rem; }}
+.rp-table th, .rp-table td {{ border-bottom: 1px solid #dddddd; text-align: left; padding: 4px 8px; vertical-align: top; }}
+.rp-table th {{ border-bottom: 1px solid #999999; }}
+.rp-hint {{ display: inline-block; border: 1px solid #999999; border-radius: 50%; width: 1.1em; height: 1.1em;
+  line-height: 1.05em; text-align: center; font-size: 0.7rem; color: #555555; cursor: help; margin-left: 3px; }}
+.rp-chip {{ display: inline-block; border: 1px solid #b8b8b8; border-radius: 3px; padding: 1px 6px; margin: 0 4px 2px 0;
+  font-size: 0.82rem; }}
+.rp-chip.rp-found {{ border-color: #5f8a66; }}
+.rp-chip.rp-missing {{ color: #8a5a2b; border-color: #c9a27a; }}
+.rp-chip.rp-none {{ color: #8a5a2b; border-color: #b8b8b8; }}
+.rp-chip.rp-unused {{ color: #888888; }}
+</style>"""
+
+
+def _box(name: str, desc: str, kind: str, state: str, extra: str = "", index: int | None = None) -> str:
+    tick = "✓ " if state == "done" else ""
+    data = f' data-step="{index}"' if index is not None else ""
+    lines = f'<div class="rp-name">{tick}{escape(name)}</div><div class="rp-desc">{escape(desc)}</div>'
+    if extra:
+        lines += f'<div class="rp-desc">{escape(extra)}</div>'
+    return f'<div class="rp-box rp-{kind} rp-{state}" data-state="{state}"{data}>{lines}</div>'
+
+
+def panel_html(board: StatusBoard | None, mode: str, counts: dict | None = None) -> str:
+    """The pipeline panel: inputs, the eight steps, the four tiers. Box states come from the board
+    (all neutral before a run)."""
+    states = board.box_states() if board is not None else ["neutral"] * len(STEPS)
+    in_state = "done" if board is not None and board.started else "neutral"
+    tier_state = "done" if board is not None and board.finished else ("later" if board is not None and board.started else "neutral")
+    parts = [_box(n, d, "input", in_state) for n, d in INPUTS]
+    for i, ((name, desc), state) in enumerate(zip(STEPS, states)):
+        parts.append(_box(name, desc, "step", state, weights_text(mode) if name == SCORING else "", i))
+    for t in TIERS:
+        label = f"{t} · {counts.get(t, 0)}" if counts is not None else t
+        parts.append(_box(label, TIER_TEXT[t], "tier", tier_state))
+    return '<div class="rp-panel">' + '<span class="rp-arrow">→</span>'.join(parts) + "</div>"
+
+
+def strip_text(board: StatusBoard) -> str:
+    """The one-line strip shown once the results are in."""
+    states = board.box_states()
+    return "  ·  ".join(("✓ " if s == "done" else "") + n for n, s in zip(SHORT_NAMES, states))
+
+
+def table_html(rows: list[dict], columns: list[str]) -> str:
+    """A results table with a ? hint on each header."""
+    head = "".join(f'<th>{escape(c)}<span class="rp-hint" title="{escape(HINTS.get(c, ""))}">?</span></th>' for c in columns)
+    body = "".join("<tr>" + "".join(f"<td>{escape(str(r.get(c, '')))}</td>" for c in columns) + "</tr>" for r in rows)
+    return f'<table class="rp-table"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>'
+
+
+def plain_table_html(rows: list[dict]) -> str:
+    if not rows:
+        return ""
+    cols = list(rows[0])
+    head = "".join(f"<th>{escape(c)}</th>" for c in cols)
+    body = "".join("<tr>" + "".join(f"<td>{escape(str(r[c]))}</td>" for c in cols) + "</tr>" for r in rows)
+    return f'<table class="rp-table"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>'
+
+
+def chips_html(result: dict) -> str:
+    kind = {"Found": "found", "None found": "none", "Not found": "missing", "Not used": "unused"}
+    chips = "".join(f'<span class="rp-chip rp-{kind[s]}" data-area="{escape(a)}" data-status="{escape(s)}">'
+                    f"{escape(a)} · {escape(s)}</span>" for a, s in areas(result))
+    return f"Based on {based_on(result)} areas: {chips}"

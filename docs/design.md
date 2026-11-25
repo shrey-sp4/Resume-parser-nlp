@@ -973,21 +973,30 @@ compares GT-based and parser-based rankings on the development resumes (aggregat
 The only file that imports streamlit; all work is in `src/shortlisting/service.py`
 (`run_shortlist`: parse each PDF, cache the parser output by file hash, score, rank). The work
 folder is `RESUME_SHORTLIST_DIR`, else `RESUME_DATA_DIR/shortlist_runs`; a folder inside the repo
-is refused, and uploads, the cache, saved requirements and CSV exports stay there. Everything a
-recruiter sees is in plain words: no parser codes, entry numbers, method names or internal
-reasons. Screens: CVs (a folder or an upload, with the count found), requirements (mode, field,
-minimum degree, experience kind and years only in experience mode, institution cutoff only in
-education mode, venue cutoff only in publications mode, keywords and synonyms with examples,
-keyword suggestions from a pasted job ad, save and load as JSON), a run button with live progress
-(one row per CV with its step; the steps are observed by wrapping the parser's own stage
-functions, passed to `run_pipeline` as its stage list, so the parser output is unchanged; stage 5
-reads education, experience and publications in one call, so they are one step), and results: a
-summary line, sort and minimum-score filter, four tabs (Shortlist, Review, Hold, Unreadable)
-with a table (rank, file, score, confidence, reason) and a card per CV (what was found for
-education, experience and publications, with institution and venue levels as Top, Good, Fair or
-Not listed; what is missing; the requirements), an Open CV button, a CSV download (a copy is
-saved in the work folder), one short decision-support note, and a confirmed Clear saved results
-button. No name, gender, age, photo or nationality is shown or used.
+is refused, and uploads, the cache and CSV exports stay there. Everything a recruiter sees is in
+plain words: no parser codes, entry numbers, method names or internal reasons. Fonts come from
+injected CSS (headings Garamond, other text Times New Roman, with fallbacks; no web fonts).
+Screens: CVs (a folder or an upload, with the count found), requirements (mode, field, minimum
+degree, experience kind and years only in experience mode, institution cutoff only in education
+mode, venue cutoff only in publications mode, keywords and synonyms with examples; a short hint
+on each input), then a pipeline panel and the run. The panel is a row of flat boxes: the two
+inputs, eight steps (Reading the PDF; Finding sections; Reading education, experience and
+publications; Checking the reading; Looking up journal, conference and institution rankings;
+Working out experience years; Scoring, with the mode's weights; Sorting into tiers) and the four
+tiers. During a run the active box is highlighted, finished boxes are ticked and later ones grey,
+with one status line ("Reading the PDF · CV 3 of 12") and a progress bar; afterwards the panel
+folds into a one-line strip. The first four steps are the parser's stage boundaries, observed by
+wrapping its own stage functions (passed to `run_pipeline` as its stage list, so the parser
+output is unchanged; stage 5 reads the three sections in one call). The rankings step makes the
+scorer's own cached lookups; the years step runs the same experience calculator; scoring and
+sorting are the scorer's `score_pool` and its ranking (`Shortlister.rank` without stability
+runs). Results: a summary line, sort and minimum-score filter, four tabs with a table (Rank, CV,
+Score as a percentage, Based on N of 4 areas, Reason; a hint on each header) and a card per CV
+(area chips Found or Not found, what was found, what is missing, the requirements), an Open CV
+button, a CSV download (a copy is saved in the work folder), one short decision-support note,
+and a confirmed Clear saved results button. A CV held back by thin evidence says so in its
+reason ("High match, but Experience was not found. Please check the CV."). No name, gender, age,
+photo or nationality is shown or used.
 
 ## 8. Repo layout
 

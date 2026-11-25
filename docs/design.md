@@ -993,10 +993,18 @@ a green tick, waiting boxes a dim grey outline; after the run every box is ticke
 tiers show their counts. Our own four steps stay lit for at least `config/ui.json`
 `min_step_display_seconds` (0.6 s, cosmetic, 0 in the tests); parser stages are never delayed,
 so the fastest of them can pass between two screen updates. Results: a summary line, sort and
-minimum-score filter, four tabs with a table (Rank, CV, Score as a percentage, Based on N of 4
-areas, Reason; Based on is hidden when every CV has all four areas, and Reason in the Shortlist
+minimum-score filter, four tabs with a table (Rank, CV, Score as a percentage, Keywords N of M only when keywords
+were entered, Based on N of 4 areas, Reason; Based on is hidden when every CV has all four areas, and Reason in the Shortlist
 tab when every row has the same one) and a card per CV (area chips Found, None found, Not found
 or Not used; a score bar only for the areas counted in the score, one plain line for the others;
+the topic area shows N of M keywords matched (and K partly) and one line per keyword, read
+from the scorer's own topic evidence (the source it read and the words it counted, each keyword
+split by the same tokenize()): a tick when every word of the keyword was counted, with in
+publications or elsewhere in the CV; ~ when only some words were counted (only 'word' found), or
+when a CV whose publications were scored has the keyword only elsewhere in its text (found
+elsewhere in the CV, not counted in the score; the text is read for this line only); a cross
+when it is found nowhere; the table Keywords column and the CSV Keywords matched column carry
+the same N of M, K partly;
 what was found, what is missing, the requirements), an Open CV
 button, a CSV download (a copy is saved in the work folder), one short decision-support note,
 and a confirmed Clear saved results button. A CV held back by thin evidence says so in its

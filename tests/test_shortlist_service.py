@@ -274,7 +274,7 @@ def test_tables_cards_summary_and_export_are_plain_and_hold_no_personal_fields(e
     assert service.summary_line(run) == "3 CVs read: " + ", ".join(f"{counts[t]} {t}" for t in service.TIERS)
     for r in run.results:
         row = service.table_rows([r])[0]
-        assert list(row) == ["Rank", "CV", "Score", "Based on", "Reason"]
+        assert list(row) == ["Rank", "CV", "Score", "Keywords", "Based on", "Reason"]
         if r["score"] is not None:
             assert row["Score"] == f"{round(r['score'] * 100)}%" and re.fullmatch(r"\d{1,3}%", row["Score"])
         c = service.card(r)
@@ -299,7 +299,8 @@ def test_tables_cards_summary_and_export_are_plain_and_hold_no_personal_fields(e
         assert path.parent == (run.work_dir / "exports") and not str(path).startswith(str(REPO_ROOT))
         rows = list(csv.DictReader(path.open(encoding="utf-8")))
         assert len(rows) == 3 and all(r["CV"].startswith(column) for r in rows)
-        assert list(rows[0]) == ["Tier", "Rank", "CV", "Score", "Based on", "Areas found", "Reason"]  # unchanged
+        assert list(rows[0]) == ["Tier", "Rank", "CV", "Score", "Keywords matched", "Based on", "Areas found", "Reason"]
+        assert all(re.fullmatch(r"\d of 2(, \d partly)?", r["Keywords matched"]) for r in rows if r["Tier"] != "Unreadable")
         assert list(rows[0]) == service.EXPORT_COLUMNS
         assert no_jargon(path.read_text(encoding="utf-8")) == []
 
@@ -366,6 +367,123 @@ def test_table_hides_columns_without_information():
     assert service.table_columns(mixed, "Shortlist") == ["Rank", "CV", "Score", "Based on", "Reason"]
     assert service.table_columns([row("3 of 4", "x")], "Shortlist") == ["Rank", "CV", "Score", "Based on"]
     assert service.table_columns([], "Hold")[:3] == ["Rank", "CV", "Score"]
+
+
+KEYWORDS = "Signal processing, deep learning, QUANTUM"
+
+
+def _pub_cv(rid, *titles, text=None):
+    pubs = [{"title": t, "type": "journal", "year": "2020", "venue": "Journal of Things"} for t in titles]
+    return Candidate(rid, {"publications": pubs}, "ACCEPT", text=text)
+
+
+def _keyword_pool(cands, keywords=KEYWORDS):
+    p = profile(keywords=keywords)
+    results = Shortlister(p, FakeVenues(), FakeInstitutions()).score_pool(cands)
+    texts = {c.resume_id: c.text for c in cands}
+    for r in results:
+        r.update(tier="Review", rank=1, file_name="x.pdf",
+                 keyword_matches=service.keyword_matches(r, p, texts[r["resume_id"]]))
+    return {r["resume_id"]: r for r in results}
+
+
+def _lines(r):
+    return [service.keyword_line(k) for k in r["keyword_matches"]]
+
+
+def test_keyword_states_matched_partly_not_counted_and_not_found():
+    pool = _keyword_pool([
+        _pub_cv("r_all", "Quantum signal processing with deep learning"),
+        _pub_cv("r_part", "Deep learning for signal denoising"),
+        _pub_cv("r_else", "Graph theory notes", text="Signal processing and QUANTUM work"),
+        Candidate("r_text", {"publications": []}, "ACCEPT", text="Built SIGNAL PROCESSING tools; Quantum lab."),
+        Candidate("r_empty", {"publications": []}, "ACCEPT", text="Gardening and cooking.")])
+    assert _lines(pool["r_all"]) == ["✓ Signal processing · in publications", "✓ deep learning · in publications",
+                                     "✓ QUANTUM · in publications"]
+    # a multi-word keyword with one word found is partly matched
+    assert _lines(pool["r_part"]) == ["~ Signal processing · only 'Signal' found", "✓ deep learning · in publications",
+                                      "✗ QUANTUM"]
+    # on a CV with publications, words only elsewhere in the CV are shown but not counted
+    assert _lines(pool["r_else"]) == [
+        "~ Signal processing · found elsewhere in the CV, not counted in the score", "✗ deep learning",
+        "~ QUANTUM · found elsewhere in the CV, not counted in the score"]
+    # a CV with no publications is scored on its whole text: a tick, elsewhere in the CV (case-insensitive)
+    assert _lines(pool["r_text"]) == ["✓ Signal processing · elsewhere in the CV", "✗ deep learning",
+                                      "✓ QUANTUM · elsewhere in the CV"]
+    assert _lines(pool["r_empty"]) == ["✗ Signal processing", "✗ deep learning", "✗ QUANTUM"]
+    assert {rid: service.keywords_text(r) for rid, r in pool.items()} == {
+        "r_all": "3 of 3", "r_part": "1 of 3, 1 partly", "r_else": "0 of 3, 2 partly", "r_text": "2 of 3",
+        "r_empty": "0 of 3"}
+    # the states agree with the scorer's topic value: above 0 exactly when a word was counted, and a CV
+    # with nothing counted has the lowest value in the pool (words not counted add nothing)
+    values = {rid: r["components"]["topic_fit"]["value"] for rid, r in pool.items()}
+    for rid, r in pool.items():
+        in_score = any(k["state"] in ("matched", "partly") for k in r["keyword_matches"])
+        assert (values[rid] > 0) == in_score, rid
+        if not in_score:
+            assert values[rid] == min(values.values())
+
+
+def test_all_keywords_matched_is_not_lower_than_partly_matched():
+    pool = _keyword_pool([_pub_cv("r_a", "quantum signal processing deep learning"),
+                          _pub_cv("r_b", "quantum signal graph theory notes")])  # same length, fewer matches
+    assert service.keywords_text(pool["r_a"]) == "3 of 3" and service.keywords_text(pool["r_b"]) == "1 of 3, 1 partly"
+    assert pool["r_a"]["components"]["topic_fit"]["value"] >= pool["r_b"]["components"]["topic_fit"]["value"]
+
+
+def test_multi_word_keyword_one_word_is_partly_both_words_is_matched():
+    pool = _keyword_pool([_pub_cv("r_both", "Processing of signals"), _pub_cv("r_one", "Signal theory"),
+                          _pub_cv("r_no", "Learning theory")], keywords="signal processing")
+    assert _lines(pool["r_both"]) == ["✓ signal processing · in publications"]  # all words present, any order
+    assert _lines(pool["r_one"]) == ["~ signal processing · only 'signal' found"]
+    assert _lines(pool["r_no"]) == ["✗ signal processing"]
+    assert [service.keywords_text(pool[r]) for r in ("r_both", "r_one", "r_no")] == [
+        "1 of 1", "0 of 1, 1 partly", "0 of 1"]
+
+
+def test_keyword_display_never_changes_scores_or_tiers():
+    cands = [_pub_cv("r_1", "Deep learning for signal denoising", text="quantum work"),
+             Candidate("r_2", {"publications": []}, "ACCEPT", text="signal processing"),
+             _pub_cv("r_3", "Other")]
+    p = profile(keywords=KEYWORDS)
+    plain = Shortlister(p, FakeVenues(), FakeInstitutions()).rank(cands, stability=False)
+    shown = _keyword_pool(cands)
+    for r in plain:
+        before = json.dumps(r, sort_keys=True)
+        service.keyword_matches(r, p, "any text at all")
+        assert json.dumps(r, sort_keys=True) == before  # read only
+        s = shown[r["resume_id"]]
+        assert (s["score"], s["components"], s["tier_reasons"]) == (r["score"], r["components"], r["tier_reasons"])
+
+
+def test_keyword_card_lines_table_column_and_csv():
+    r = _keyword_pool([_pub_cv("r_1", "Deep learning for signal denoising"), _pub_cv("r_2", "Other")])["r_1"]
+    topic = {c["name"]: c for c in service.card(r)["components"]}["Topic match"]
+    assert topic["value"] is None and topic["score"] == ""  # no percentage for topic on the card
+    assert topic["keywords"] == {"summary": "1 of 3 keywords matched, 1 partly", "lines": [
+        "~ Signal processing · only 'Signal' found", "✓ deep learning · in publications", "✗ QUANTUM"]}
+    others = [c for c in service.card(r)["components"] if c["name"] != "Topic match" and c["counted"]]
+    assert others and all("%" in c["score"] for c in others)  # the other areas keep their bars
+    rows = service.table_rows([r])
+    assert list(rows[0])[:5] == ["Rank", "CV", "Score", "Keywords", "Based on"]
+    assert rows[0]["Keywords"] == "1 of 3, 1 partly"
+    assert service.table_columns(rows, "Review")[:4] == ["Rank", "CV", "Score", "Keywords"]
+    run = service.ShortlistRun([r], REPO_ROOT.parent, {"Review": [r]})
+    assert service.export_rows(run)[0]["Keywords matched"] == "1 of 3, 1 partly"
+    full = _keyword_pool([_pub_cv("r_1", "Quantum signal processing with deep learning")])["r_1"]
+    summary = {c["name"]: c for c in service.card(full)["components"]}["Topic match"]["keywords"]["summary"]
+    assert summary == "3 of 3 keywords matched"  # no ', K partly' when none are partial
+
+
+def test_no_keywords_hides_the_column_and_the_topic_bar():
+    r = _keyword_pool([_pub_cv("r_1", "Deep learning")], keywords="")["r_1"]
+    assert r["keyword_matches"] is None and service.keywords_text(r) == ""
+    topic = {c["name"]: c for c in service.card(r)["components"]}["Topic match"]
+    assert topic["keywords"] is None and not topic["counted"] and topic["value"] is None and topic["status"] == "Not used"
+    assert dict(service.areas(r))["Topic match"] == "Not used"  # the Based on chip is unchanged
+    assert "Keywords" not in service.table_columns(service.table_rows([r]), "Review")
+    run = service.ShortlistRun([r], REPO_ROOT.parent, {"Review": [r]})
+    assert service.export_rows(run)[0]["Keywords matched"] == ""
 
 
 def test_plain_reasons_for_each_tier_reason():
@@ -485,10 +603,10 @@ def test_ui_smoke_on_three_synthetic_pdfs(env):
     assert not re.search(r"(^|\s)\?(\s|$)", text) and "rp-hint" not in text and "title=" not in text  # no ? hints
     assert all("✓" not in e.label for e in at.expander)  # no strip: the panel stays as it is
     tables = [list(df.value.columns) for df in at.dataframe if "Requirement" not in df.value.columns]
-    assert tables  # each tier table shows only the columns with information
+    assert tables and all(cols[3] == "Keywords" for cols in tables)  # keywords were entered; only columns with information
     for tab_rows, cols in zip([r for t in service.TIERS[:3] if (r := run.by_tier.get(t))], tables):
         assert cols == service.table_columns(service.table_rows(tab_rows), tab_rows[0]["tier"])
-        assert cols[:3] == ["Rank", "CV", "Score"] and set(cols) <= {"Rank", "CV", "Score", "Based on", "Reason"}
+        assert cols[:3] == ["Rank", "CV", "Score"] and set(cols) <= {"Rank", "CV", "Score", "Keywords", "Based on", "Reason"}
     final = next(m.value for m in at.sidebar.markdown if 'class="rp-panel"' in m.value)
     counts = {t: len(v) for t, v in run.by_tier.items()}
     assert states(final) == ["done"] * len(service.STEPS) and all(f"{t} {c}" in final for t, c in counts.items())

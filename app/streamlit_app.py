@@ -136,7 +136,11 @@ def show_card(r: dict) -> None:
     for comp in c["components"]:
         left, mid = st.columns([2, 5])
         left.write(f"**{comp['name']}**")
-        if not comp["counted"]:  # not found or not used: one plain line, no bar
+        if comp["keywords"] is not None:  # topic: the keywords, ticked or crossed, no percentage
+            mid.write(comp["keywords"]["summary"])
+            for line in comp["keywords"]["lines"]:
+                mid.write(line)
+        elif not comp["counted"]:  # not found or not used: one plain line, no bar
             mid.write(comp["status"])
         else:
             mid.progress(float(comp["value"]), text=comp["score"])

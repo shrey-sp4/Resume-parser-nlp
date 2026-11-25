@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Callable
 
 from resume_parser.schema import REPO_ROOT, DataDirError, data_root, load_config, resume_id_for
+from shortlisting.bm25 import tokenize
 from shortlisting.experience import compute_experience
 from shortlisting.features import safe_view
 from shortlisting.profile import RequirementProfile
@@ -375,7 +376,7 @@ def run_shortlist(profile: RequirementProfile, pdf_paths: list[str | Path], work
     n = len(pdfs)
     emit = progress_callback or (lambda e: None)
     pause = step_display_seconds()
-    candidates, names, extra = [], {}, {}
+    candidates, names, extra, texts = [], {}, {}, {}
     name_of = dict(STEPS)
     for k, (pdf, rid) in enumerate(zip(pdfs, ids), 1):
         base = {"cv": k, "total": n, "file": pdf.name}
@@ -398,6 +399,7 @@ def run_shortlist(profile: RequirementProfile, pdf_paths: list[str | Path], work
             emit({**base, "key": "could_not_read", "step": COULD_NOT_READ, "state": "could_not_read"})
         candidates.append(Candidate(rid, main or {}, decision, flags, text))
         names[rid] = pdf.name
+        texts[rid] = text  # for the keyword display only
         extra[rid] = {"unreadable_reason": _unreadable_reason(sidecar) if decision == "FAIL" else "",
                       "degrees": _degrees(main or {})}
     venues, institutions = load_indexes()
@@ -431,6 +433,7 @@ def run_shortlist(profile: RequirementProfile, pdf_paths: list[str | Path], work
     for r in results:
         r["file_name"] = names[r["resume_id"]]
         r.update(extra[r["resume_id"]])
+        r["keyword_matches"] = keyword_matches(r, profile, texts[r["resume_id"]])  # display and export only
     by_tier = {t: [r for r in results if r["tier"] == t] for t in TIERS}
     hold(started)
     emit({**pool, "key": "sort", "step": SORTING, "state": "done"})
@@ -478,6 +481,81 @@ def build_profile(form: dict) -> RequirementProfile:
 
 
 # ---------------------------------------------------------------- presentation (plain words only)
+
+
+IN_PUBLICATIONS, ELSEWHERE = "in publications", "elsewhere in the CV"
+
+
+NOT_COUNTED = "not counted in the score"
+
+
+def _found_words(keyword: str, words: set[str]) -> list[str]:
+    """The keyword's own words (as typed) whose scorer form is in `words`."""
+    return [w for w in keyword.split() if set(tokenize(w)) & words]
+
+
+def keyword_matches(result: dict, profile: RequirementProfile, text: str | None = None) -> list[dict] | None:
+    """Each recruiter keyword's state on this CV, for display and export only (never a score).
+
+    The source the scorer reads and the words it counted come from the topic component itself:
+    publication titles and venues when the CV has any, else the whole CV text; each keyword (and
+    synonym) split into words by the same tokenize(). States:
+      matched      every word of the keyword (or of one synonym) counted: ✓, with where
+      partly       some of its words counted: ~ only those found
+      not_counted  none counted, but the CV text (same tokenize) has some of them, on a CV whose
+                   publications were the scored source: ~ found elsewhere, not counted
+      none         not found anywhere: ✗
+    `text` is the CV text, read only for the not_counted check. None when no keywords were entered.
+    Each item: keyword (as typed), state, where, words (the keyword's words found, as typed)."""
+    keywords = list(dict.fromkeys(k.strip() for k in profile.keywords if k.strip()))
+    if not keywords:
+        return None
+    ev = ((result.get("components") or {}).get("topic_fit") or {}).get("evidence") or {}
+    counted = set(ev.get("matched_terms") or [])
+    from_pubs = ev.get("source") == "publications"
+    where = IN_PUBLICATIONS if from_pubs else ELSEWHERE
+    text_words = set(tokenize(text or "")) if from_pubs else set()
+    out = []
+    for k in keywords:
+        phrases = [tokenize(x) for x in [k, *profile.synonyms.get(k, [])]]
+        item = {"keyword": k, "state": "none", "where": "", "words": []}
+        if any(ph and set(ph) <= counted for ph in phrases):
+            item.update(state="matched", where=where, words=k.split())
+        elif counted & {t for ph in phrases for t in ph}:
+            item.update(state="partly", where=where, words=_found_words(k, counted))
+        elif text_words & {t for ph in phrases for t in ph}:
+            item.update(state="not_counted", where=ELSEWHERE, words=_found_words(k, text_words))
+        out.append(item)
+    return out
+
+
+def _keyword_counts(km: list[dict]) -> str:
+    n = sum(1 for k in km if k["state"] == "matched")
+    part = sum(1 for k in km if k["state"] in ("partly", "not_counted"))
+    return f"{n} of {len(km)}", (f", {part} partly" if part else "")
+
+
+def keywords_text(result: dict) -> str:
+    """'N of M' keywords matched (', K partly' when any are partial or not counted), or '' when no
+    keywords were entered (or the CV is Unreadable)."""
+    km = result.get("keyword_matches")
+    if not km or result.get("tier") == "Unreadable":
+        return ""
+    return "".join(_keyword_counts(km))
+
+
+def keyword_line(k: dict) -> str:
+    """One card line: ✓ matched, ~ partly or not counted, ✗ not found."""
+    quoted = ", ".join(f"'{w}'" for w in k["words"])
+    whole = k["words"] == k["keyword"].split()
+    if k["state"] == "matched":
+        return f"✓ {k['keyword']} · {k['where']}"
+    if k["state"] == "partly":
+        return f"~ {k['keyword']} · only {quoted} found"
+    if k["state"] == "not_counted":
+        found = "found" if whole else f"only {quoted} found"
+        return f"~ {k['keyword']} · {found} {ELSEWHERE}, {NOT_COUNTED}"
+    return f"✗ {k['keyword']}"
 
 
 def percent(score: float | None) -> str:
@@ -591,21 +669,25 @@ def reason_text(result: dict) -> str:
 
 
 def table_rows(results: list[dict], label: str = "file_name") -> list[dict]:
-    """Rows for a results table: Rank, CV (file name or resume ID), Score (a percentage), Based on,
-    Reason. No name, gender, age, photo or nationality field ever appears."""
+    """Rows for a results table: Rank, CV (file name or resume ID), Score (a percentage), Keywords
+    (N of M), Based on, Reason. No name, gender, age, photo or nationality field ever appears."""
     return [{"Rank": r["rank"] if r["rank"] is not None else "",
              "CV": r["file_name"] if label == "file_name" else r["resume_id"],
-             "Score": percent(r["score"]), "Based on": based_on(r), "Reason": reason_text(r)} for r in results]
+             "Score": percent(r["score"]), "Keywords": keywords_text(r), "Based on": based_on(r),
+             "Reason": reason_text(r)} for r in results]
 
 
 TABLE_KEEP = ("Rank", "CV", "Score")  # always shown
 
 
 def table_columns(rows: list[dict], tier: str) -> list[str]:
-    """The table columns that carry information for these rows: Rank, CV and Score always; Based on
+    """The table columns that carry information for these rows: Rank, CV and Score always; Keywords
+    only when keywords were entered (always between Score and Based on); Based on
     unless every CV has all four areas; Reason unless, in the Shortlist tab, every row has the same
     one (the tab already says why). The CSV export keeps every column."""
     cols = list(TABLE_KEEP)
+    if any(r.get("Keywords") for r in rows):
+        cols.append("Keywords")
     if any(r.get("Based on") != f"{len(AREAS)} of {len(AREAS)}" for r in rows):
         cols.append("Based on")
     if not (tier == "Shortlist" and len({r.get("Reason") for r in rows}) <= 1):
@@ -653,9 +735,14 @@ def card(result: dict) -> dict:
         if (c["value"] is None or c["reason"] == "no_publication_entries") and MISSING_TEXT.get(c["reason"]):
             missing.append(MISSING_TEXT[c["reason"]])
         counted = status[AREAS[name]] in COUNTED  # a bar only for areas the score is based on
+        km = result.get("keyword_matches") if name == "topic_fit" else None
+        bar = counted and km is None  # the topic area lists its keywords instead of a percentage
         comps.append({"name": AREAS.get(name, name), "status": status[AREAS[name]], "counted": counted,
-                      "value": c["value"] if counted else None, "score": percent(c["value"]) if counted else "",
-                      "found": [f for f in found if f]})
+                      "value": c["value"] if bar else None, "score": percent(c["value"]) if bar else "",
+                      "found": [f for f in found if f],
+                      "keywords": None if km is None else {
+                          "summary": "{} keywords matched{}".format(*_keyword_counts(km)),
+                          "lines": [keyword_line(k) for k in km]}})
     reqs = []
     for k, v in result["eligibility"].items():
         req, why = _check_text(k, v)
@@ -664,7 +751,7 @@ def card(result: dict) -> dict:
             "missing": list(dict.fromkeys(missing)), "requirements": reqs, "reason": reason_text(result)}
 
 
-EXPORT_COLUMNS = ["Tier", "Rank", "CV", "Score", "Based on", "Areas found", "Reason"]
+EXPORT_COLUMNS = ["Tier", "Rank", "CV", "Score", "Keywords matched", "Based on", "Areas found", "Reason"]
 
 
 def export_rows(run: ShortlistRun, label: str = "resume_id") -> list[dict]:
@@ -672,6 +759,7 @@ def export_rows(run: ShortlistRun, label: str = "resume_id") -> list[dict]:
     for r in run.results:
         row = {"Tier": r["tier"]}
         row.update(table_rows([r], "file_name" if label == "file_name" else "resume_id")[0])
+        row["Keywords matched"] = row["Keywords"]
         row["Areas found"] = "" if r["tier"] == "Unreadable" else ", ".join(a for a, s in areas(r) if s in COUNTED)
         rows.append({k: row[k] for k in EXPORT_COLUMNS})
     return rows
